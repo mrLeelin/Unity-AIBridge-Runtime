@@ -5,11 +5,14 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import ipaddress
 import json
+import math
 import os
 from pathlib import Path
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -21,6 +24,7 @@ import uuid
 
 ROOT = Path(__file__).resolve().parent
 MAX_DLL_BYTES = 8 * 1024 * 1024
+DISCOVERY_PROTOCOL = "aibridge-runtime-discovery"
 
 
 class BridgeError(Exception):
@@ -50,6 +54,120 @@ def run_process(arguments, timeout=120):
     if result.returncode:
         raise BridgeError((result.stdout + "\n" + result.stderr).strip()[-12000:])
     return result.stdout.strip()
+
+
+def parse_adb_devices(output):
+    lines = output.splitlines()
+    if any(line.strip().lower().startswith(("error:", "adb:")) for line in lines):
+        raise BridgeError("ADB reported an error while listing devices.")
+    header = next((index for index, line in enumerate(lines) if line.strip() == "List of devices attached"), None)
+    if header is None:
+        raise BridgeError("ADB returned an unrecognized device listing.")
+    devices = []
+    for line in lines[header + 1:]:
+        if not line.strip() or line.lstrip().startswith("* daemon"):
+            continue
+        parts = line.strip().split(None, 2)
+        if len(parts) < 2:
+            raise BridgeError("ADB returned an incomplete device entry.")
+        serial, state = parts[:2]
+        details = parts[2] if len(parts) == 3 else ""
+        if state == "no" and details.startswith("permissions"):
+            state, details = "no permissions", details[len("permissions"):].strip()
+        devices.append({"serial": serial, "state": state, "details": details})
+    return devices
+
+
+def parse_discovery_response(data, source, request_id, udp_port, loopback_only=False):
+    """Validate protocol correlation and derive a safe HTTP origin from the sender."""
+    try:
+        if len(data) > 16384 or source[1] != udp_port:
+            return None
+        address = ipaddress.IPv4Address(source[0])
+        if address.is_multicast or address.is_unspecified or int(address) == 0xffffffff:
+            return None
+        if loopback_only and not address.is_loopback:
+            return None
+        response = json.loads(data.decode("utf-8"))
+        if not isinstance(response, dict) or response.get("protocol") != DISCOVERY_PROTOCOL or response.get("requestId") != request_id:
+            return None
+        if type(response.get("version")) is not int or response["version"] != 1 or response.get("transport") != "http":
+            return None
+        target_id = response.get("targetId")
+        if not isinstance(target_id, str) or not target_id or len(target_id) > 256:
+            return None
+        origin = response.get("reachableUrl") or response.get("url")
+        if not isinstance(origin, str):
+            return None
+        parsed = urllib.parse.urlsplit(origin)
+        if parsed.scheme != "http" or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path not in ("", "/"):
+            return None
+        port = parsed.port
+        if port is None or not 1 <= port <= 65535:
+            return None
+        # The UDP reply's source is authoritative; do not forward tokens later to
+        # an arbitrary advertised hostname supplied by a discovery responder.
+        reachable_url = f"http://{address}:{port}"
+        target = {
+            "protocol": DISCOVERY_PROTOCOL,
+            "version": 1,
+            "targetId": target_id,
+            "transport": "http",
+            "url": reachable_url,
+            "reachableUrl": reachable_url,
+            "sourceAddress": str(address),
+            "sourcePort": source[1],
+            "requiresToken": response.get("requiresToken") is True,
+        }
+        for key in ("projectName", "applicationVersion", "platform", "deviceName", "lastSeenUtc"):
+            value = response.get(key)
+            if isinstance(value, str):
+                target[key] = value[:512]
+        capabilities = response.get("capabilities")
+        if isinstance(capabilities, dict):
+            known = ("perf", "diagnose", "screenshotPull", "logsClear", "runtimeCodeExecute", "file", "http", "lanDiscovery", "ws")
+            target["capabilities"] = {key: capabilities[key] for key in known if type(capabilities.get(key)) is bool}
+        return target
+    except (ValueError, TypeError, KeyError, UnicodeError, IndexError):
+        return None
+
+
+def discover_targets(udp_port=27183, timeout=3.0, broadcast="255.255.255.255"):
+    if not 1 <= udp_port <= 65535:
+        raise BridgeError("--udp-port must be between 1 and 65535.")
+    if not math.isfinite(timeout) or not 0 < timeout <= 60:
+        raise BridgeError("Discovery --timeout must be greater than 0 and at most 60 seconds.")
+    try:
+        destination = ipaddress.IPv4Address(broadcast)
+    except ipaddress.AddressValueError as error:
+        raise BridgeError("--broadcast must be an IPv4 destination address.") from error
+    if destination.is_unspecified or destination.is_multicast:
+        raise BridgeError("--broadcast must identify an IPv4 broadcast or unicast destination.")
+    request_id = uuid.uuid4().hex
+    request = json.dumps({"protocol": DISCOVERY_PROTOCOL, "version": 1, "requestId": request_id}).encode("utf-8")
+    deadline = time.monotonic() + timeout
+    next_send = 0.0
+    targets = {}
+    received = 0
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
+        udp.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        udp.bind(("0.0.0.0", 0))
+        while time.monotonic() < deadline and len(targets) < 256 and received < 2048:
+            now = time.monotonic()
+            if now >= next_send:
+                udp.sendto(request, (str(destination), udp_port))
+                next_send = now + 0.5
+            udp.settimeout(max(0.001, min(deadline - time.monotonic(), next_send - time.monotonic())))
+            try:
+                data, source = udp.recvfrom(65535)
+            except socket.timeout:
+                continue
+            received += 1
+            target = parse_discovery_response(data, source, request_id, udp_port, destination.is_loopback)
+            if target is not None:
+                key = (target["targetId"], target["sourceAddress"], target["reachableUrl"])
+                targets[key] = target
+    return sorted(targets.values(), key=lambda target: (target.get("projectName", ""), target["targetId"], target["reachableUrl"]))
 
 
 def dotnet_path():
@@ -340,6 +458,12 @@ def create_parser():
     device.add_argument("--adb", default="adb")
     device.add_argument("--serial")
     device.add_argument("--port", type=int, default=27182)
+    devices = commands.add_parser("devices")
+    devices.add_argument("--adb", default="adb")
+    discover = commands.add_parser("discover")
+    discover.add_argument("--udp-port", type=int, default=27183)
+    discover.add_argument("--timeout", type=float, default=3.0, help="Bounded LAN scan duration in seconds (maximum 60)")
+    discover.add_argument("--broadcast", default="255.255.255.255", help="IPv4 broadcast address, or a specific host to query")
     return parser
 
 
@@ -349,6 +473,10 @@ def main(argv=None):
         args = create_parser().parse_args(argv)
         if args.command == "inspect-dll":
             result = metadata_tool("inspect", Path(args.dll).resolve())
+        elif args.command == "devices":
+            result = {"success": True, "devices": parse_adb_devices(run_process([args.adb, "devices", "-l"], timeout=15))}
+        elif args.command == "discover":
+            result = {"success": True, "targets": discover_targets(args.udp_port, args.timeout, args.broadcast)}
         elif args.command == "device":
             if not 1 <= args.port <= 65535:
                 raise BridgeError("--port must be between 1 and 65535.")

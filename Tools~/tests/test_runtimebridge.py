@@ -7,10 +7,12 @@ import io
 import json
 from pathlib import Path
 import shutil
+import socket
 import subprocess
 import tempfile
 import threading
 import unittest
+from unittest import mock
 
 TOOLS = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("runtimebridge", TOOLS / "runtimebridge.py")
@@ -120,6 +122,94 @@ class ClientTests(unittest.TestCase):
             def command(self, action, parameters):
                 return {"Data": {"buildId": "ab12-cd34", "platform": "WindowsPlayer"}}
         bridge.validate_profile_target(FakeClient(), {"buildId": "AB12CD34", "target": "StandaloneWindows64"})
+
+
+class DiscoveryTests(unittest.TestCase):
+    def test_adb_listing_preserves_authorization_and_connection_states(self):
+        devices = bridge.parse_adb_devices("* daemon started successfully\nList of devices attached\nusb-1 device product:sample model:Phone device:sample transport_id:1\nusb-2 unauthorized usb:2-1\n127.0.0.1:7555 offline\nusb-3 no permissions (missing rules)\n")
+        self.assertEqual([device["state"] for device in devices], ["device", "unauthorized", "offline", "no permissions"])
+        self.assertEqual(devices[0], {"serial": "usb-1", "state": "device", "details": "product:sample model:Phone device:sample transport_id:1"})
+        self.assertEqual(devices[3]["details"], "(missing rules)")
+        self.assertEqual(bridge.parse_adb_devices("List of devices attached\n\n"), [])
+
+    def test_adb_error_and_command_failure_are_not_empty_success(self):
+        for output in ("adb: failed to connect", "List of devices attached\nerror: server error", "unexpected output"):
+            with self.assertRaises(bridge.BridgeError):
+                bridge.parse_adb_devices(output)
+        output = io.StringIO()
+        with mock.patch.object(bridge, "run_process", side_effect=bridge.BridgeError("adb failed")), contextlib.redirect_stdout(output):
+            result = bridge.main(["devices", "--adb", "C:/custom path/adb.exe"])
+        self.assertEqual(result, 1)
+        self.assertFalse(json.loads(output.getvalue())["success"])
+
+    def test_devices_command_invokes_adb_without_shell_or_interpolated_arguments(self):
+        output = io.StringIO()
+        with mock.patch.object(bridge, "run_process", return_value="List of devices attached\nserial unauthorized") as run, contextlib.redirect_stdout(output):
+            result = bridge.main(["devices", "--adb", "C:/custom path/adb.exe"])
+        self.assertEqual(result, 0)
+        run.assert_called_once_with(["C:/custom path/adb.exe", "devices", "-l"], timeout=15)
+        self.assertEqual(json.loads(output.getvalue())["devices"][0]["state"], "unauthorized")
+
+    @staticmethod
+    def response(request_id="nonce", **overrides):
+        response = {
+            "protocol": "aibridge-runtime-discovery", "version": 1,
+            "requestId": request_id, "targetId": "fixture-target", "transport": "http",
+            "reachableUrl": "http://untrusted-advertised-host:27182", "projectName": "Fixture",
+            "requiresToken": True, "authToken": "must-not-be-returned",
+            "capabilities": {"runtimeCodeExecute": True, "authToken": "must-not-be-returned"},
+        }
+        response.update(overrides)
+        return json.dumps(response).encode()
+
+    def test_udp_protocol_nonce_and_source_validation(self):
+        source = ("192.168.1.25", 27183)
+        result = bridge.parse_discovery_response(self.response(), source, "nonce", 27183)
+        self.assertEqual(result["reachableUrl"], "http://192.168.1.25:27182")
+        self.assertEqual(result["capabilities"], {"runtimeCodeExecute": True})
+        self.assertNotIn("must-not-be-returned", json.dumps(result))
+        self.assertIsNone(bridge.parse_discovery_response(self.response("wrong-nonce"), source, "nonce", 27183))
+        self.assertIsNone(bridge.parse_discovery_response(self.response(protocol="wrong-protocol"), source, "nonce", 27183))
+        self.assertIsNone(bridge.parse_discovery_response(self.response(version=2), source, "nonce", 27183))
+        self.assertIsNone(bridge.parse_discovery_response(self.response(), (source[0], 27184), "nonce", 27183))
+        self.assertIsNone(bridge.parse_discovery_response(self.response(), source, "nonce", 27183, loopback_only=True))
+        self.assertIsNone(bridge.parse_discovery_response(self.response(reachableUrl="http://secret@host:27182"), source, "nonce", 27183))
+
+    def test_udp_scan_correlates_request_and_deduplicates_replies(self):
+        server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        server.bind(("127.0.0.1", 0))
+        server.settimeout(2)
+        port = server.getsockname()[1]
+        observed = {}
+
+        def respond():
+            data, remote = server.recvfrom(65535)
+            request = json.loads(data)
+            observed.update(request)
+            server.sendto(self.response("unrelated-nonce"), remote)
+            valid = self.response(request["requestId"])
+            server.sendto(valid, remote)
+            server.sendto(valid, remote)
+
+        thread = threading.Thread(target=respond, daemon=True)
+        thread.start()
+        try:
+            targets = bridge.discover_targets(port, timeout=0.25, broadcast="127.0.0.1")
+            self.assertEqual(observed["protocol"], "aibridge-runtime-discovery")
+            self.assertEqual(len(observed["requestId"]), 32)
+            self.assertNotIn("token", observed)
+            self.assertEqual(len(targets), 1)
+            self.assertEqual(targets[0]["reachableUrl"], "http://127.0.0.1:27182")
+        finally:
+            server.close()
+            thread.join(timeout=2)
+
+    def test_discovery_timeout_and_destination_are_bounded(self):
+        for timeout in (0, -1, 61, float("nan"), float("inf")):
+            with self.assertRaises(bridge.BridgeError):
+                bridge.discover_targets(timeout=timeout)
+        with self.assertRaises(bridge.BridgeError):
+            bridge.discover_targets(broadcast="not-an-ip")
 
 
 @unittest.skipUnless(shutil.which("dotnet"), "Local .NET SDK required")

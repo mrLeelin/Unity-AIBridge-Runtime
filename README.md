@@ -16,7 +16,7 @@
 在 Unity Package Manager 中选择 **Add package from git URL**，使用：
 
 ```text
-https://github.com/mrLeelin/Unity-AIBridge-Runtime.git#v1.0.0
+https://github.com/mrLeelin/Unity-AIBridge-Runtime.git#v1.0.1
 ```
 
 私有仓库需要当前机器的 Git 凭据具备访问权限。也可以克隆仓库，再通过 **Add package from disk** 选择根目录的 `package.json`。
@@ -33,6 +33,21 @@ https://github.com/mrLeelin/Unity-AIBridge-Runtime.git#v1.0.0
 
 手机执行脚本无需携带 Roslyn 编译器。电脑端编译和补丁检查使用 Python 3 标准库与本机 .NET SDK；无需额外 Python 包或 NuGet 包。建议安装 .NET SDK 8 或更新版本，同时提供 .NET 8 运行时供元数据检查工具运行。
 
+## Runtime 管理窗口
+
+打开 **Window > AI Bridge Runtime > Runtime**。旧入口 **Window > AIBridge > Runtime** 和 **Players** 也可使用。Settings 窗口的“打开 Runtime 管理窗口”按钮会打开同一界面。
+
+| 页签 | 功能 |
+| --- | --- |
+| 设备连接 | ADB 设备列表、USB 转发、手动 LAN 发现、HTTP 连接状态、场景 Runtime 配置 |
+| 执行代码 | 选择对应 Player profile 后编译 C# 片段，或直接发送已有 DLL |
+| 方法热修复 | 检查真实 Player 热修复能力，选择补丁 DLL/manifest，应用补丁和读取历史 |
+| 日志 | 按类型和条数读取手机日志 |
+
+窗口使用本包独立桌面 CLI，Token 仅保存在窗口内存中并以密码字段显示。连接、编译与执行异步进行，不阻塞 Unity 界面。关闭窗口不会撤回已发往手机的请求。Scene Runtime 按钮仅在用户点击时修改当前场景，支持 Undo，不自动保存场景。
+
+这个窗口是可选的图形界面；关闭 Unity Editor 后，仍可继续使用下述 CLI 连接手机。
+
 ## Android USB 连接
 
 在项目根目录的 PowerShell 中：
@@ -41,6 +56,9 @@ https://github.com/mrLeelin/Unity-AIBridge-Runtime.git#v1.0.0
 $tool = 'Packages/com.sh.aibridge.runtime/Tools~/runtimebridge.py'
 python $tool device
 # 多设备时：python $tool device --serial <adb-serial>
+python $tool devices
+# 仅在手机配置已启用 LAN 时手动发现
+python $tool discover --udp-port 27183 --timeout 3
 
 # 使用 Settings 中显示的当前测试包 Token；不要把 Token 提交到仓库
 $env:RUNTIMEBRIDGE_TOKEN = '<session-token>'

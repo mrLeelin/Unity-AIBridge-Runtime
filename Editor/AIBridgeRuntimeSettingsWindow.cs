@@ -17,12 +17,16 @@ namespace AIBridge.Runtime.Editor
         [MenuItem("Window/AI Bridge Runtime/Settings")]
         private static void OpenWindow()
         {
-            GetWindow<AIBridgeRuntimeSettingsWindow>("AI Bridge Runtime").Show();
+            GetWindow<AIBridgeRuntimeSettingsWindow>("Runtime Settings").Show();
         }
 
         private void OnGUI()
         {
+            EditorGUILayout.BeginHorizontal();
             EditorGUILayout.LabelField("Player Runtime Bridge", EditorStyles.boldLabel);
+            if (GUILayout.Button("打开 Runtime 管理窗口", GUILayout.Width(180)))
+                AIBridgeRuntimeWindow.OpenWindow();
+            EditorGUILayout.EndHorizontal();
             EditorGUILayout.HelpBox("Configure once before building a Development Player. The phone Runtime and desktop CLI do not require a running Unity Editor.", MessageType.Info);
             var config = Resources.Load<AIBridgeRuntimeConfig>(AIBridgeRuntimeConfig.ResourceName);
             if (config == null)

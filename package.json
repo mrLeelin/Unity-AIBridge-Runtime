@@ -1,7 +1,7 @@
 {
   "name": "com.sh.aibridge.runtime",
   "displayName": "AI Bridge Runtime",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "unity": "2021.3",
   "description": "Independent Player debugging, remote code execution and HybridCLR method hotfix transport. Does not require AI Bridge Editor.",
   "author": {
