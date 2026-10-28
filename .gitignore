@@ -1,0 +1,30 @@
+# Local builds and test caches
+**/bin/
+**/obj/
+**/__pycache__/
+*.py[cod]
+*.dll
+*.pdb
+*.exe
+
+# Player data, profiles and credentials stay in the consuming project
+.runtimebridge/
+.aibridge/
+Assets/
+Library/
+Temp/
+Logs/
+UserSettings/
+**/AIBridgeRuntimeConfig.asset
+**/AIBridgeRuntimeConfig.asset.meta
+.env
+.env.*
+*.pfx
+*.p12
+*.key
+*.pem
+
+# Tooling
+.vs/
+.idea/
+.DS_Store

@@ -1,0 +1,4 @@
+interface:
+  display_name: "AI Bridge Runtime"
+  short_description: "Connect to Unity Player Runtime Bridge directly"
+  default_prompt: "Use $aibridge-runtime to connect to a running Unity Player and inspect its status."

@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>AIBridge.Hotfix.Regression</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="FakeHybridCLR/**/*.cs" />
+    <Compile Include="../AIBridgeHotfixHandler.cs" Link="AIBridgeHotfixHandler.cs" />
+    <Compile Include="../AIBridgeHotfixAdapter.cs" Link="AIBridgeHotfixAdapter.cs" />
+    <Compile Include="../AIBridgePatchRequest.cs" Link="AIBridgePatchRequest.cs" />
+    <Compile Include="../../AIBridgeRuntimeData.cs" Link="AIBridgeRuntimeData.cs" />
+    <Compile Include="../../AIBridgeRuntimeSettings.cs" Link="AIBridgeRuntimeSettings.cs" />
+    <Compile Include="../../IAIBridgeHandler.cs" Link="IAIBridgeHandler.cs" />
+    <ProjectReference Include="FakeHybridCLR/FakeHybridCLR.csproj" />
+  </ItemGroup>
+</Project>

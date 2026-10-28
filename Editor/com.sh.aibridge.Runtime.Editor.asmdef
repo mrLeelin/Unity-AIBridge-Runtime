@@ -1,0 +1,14 @@
+{
+    "name": "com.sh.aibridge.Runtime.Editor",
+    "rootNamespace": "AIBridge.Runtime.Editor",
+    "references": ["com.sh.aibridge.Runtime"],
+    "includePlatforms": ["Editor"],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
