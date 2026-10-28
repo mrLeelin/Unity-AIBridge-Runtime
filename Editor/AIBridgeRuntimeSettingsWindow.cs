@@ -28,6 +28,9 @@ namespace AIBridge.Runtime.Editor
                 AIBridgeRuntimeWindow.OpenWindow();
             EditorGUILayout.EndHorizontal();
             EditorGUILayout.HelpBox("Configure once before building a Development Player. The phone Runtime and desktop CLI do not require a running Unity Editor.", MessageType.Info);
+            if (GUILayout.Button("准备当前项目（无需添加业务代码）"))
+                AIBridgeRuntimeProjectIntegration.PrepareCurrentProject();
+            EditorGUILayout.HelpBox(AIBridgeRuntimeProjectIntegration.Describe(), MessageType.Info);
             var config = Resources.Load<AIBridgeRuntimeConfig>(AIBridgeRuntimeConfig.ResourceName);
             if (config == null)
             {

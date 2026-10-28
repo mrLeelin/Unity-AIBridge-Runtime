@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from types import SimpleNamespace
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -46,9 +47,9 @@ def read_json(path):
     return json.loads(Path(path).read_text(encoding="utf-8-sig"))
 
 
-def run_process(arguments, timeout=120):
+def run_process(arguments, timeout=120, cwd=None):
     try:
-        result = subprocess.run(arguments, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
+        result = subprocess.run(arguments, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout, cwd=cwd)
     except (OSError, subprocess.TimeoutExpired) as error:
         raise BridgeError(f"Local tool failed: {type(error).__name__}") from error
     if result.returncode:
@@ -271,6 +272,11 @@ def compile_snippet(code, profile_path, save_dll=None):
     if not profile_path:
         raise BridgeError("--profile is required for --code/--file. Export the exact target Player references first.")
     _, references, defines = target_references(profile_path)
+    return _compile_verified_snippet(code, references, defines, save_dll)
+
+
+def _compile_verified_snippet(code, references, defines, save_dll=None):
+    """Internal: callers must supply references verified for this workflow's exact Player profile."""
     dotnet, compiler = csc_path()
     with tempfile.TemporaryDirectory(prefix="runtimebridge-compile-") as temporary:
         directory = Path(temporary)
@@ -300,7 +306,14 @@ def metadata_tool(*arguments):
     dotnet = dotnet_path()
     if not executable.is_file():
         cache.mkdir(parents=True, exist_ok=True)
-        run_process([dotnet, "build", str(project), "--nologo", "--verbosity", "quiet", "-o", str(cache), "-p:BaseIntermediateOutputPath=" + str(cache / "obj") + os.sep])
+        installed = run_process([dotnet, "--list-sdks"]).splitlines()
+        versions = [line.split()[0] for line in installed if re.match(r"\d+\.\d+\.\d+ ", line)]
+        compatible = [version for version in versions if version.startswith("8.")] or versions
+        if not compatible:
+            raise BridgeError("A .NET SDK is required for patch metadata validation.")
+        sdk = max(compatible, key=lambda value: tuple(int(part) for part in value.split('.')[:3]))
+        (cache / "global.json").write_text(json.dumps({"sdk": {"version": sdk, "rollForward": "latestPatch"}}), encoding="utf-8")
+        run_process([dotnet, "build", str(project), "--nologo", "--verbosity", "quiet", "-o", str(cache), "-p:BaseIntermediateOutputPath=" + str(cache / "obj") + os.sep], cwd=cache)
     output = run_process([dotnet, str(executable), *map(str, arguments)])
     try:
         return json.loads(output)
@@ -450,6 +463,11 @@ def create_parser():
     patch.add_argument("--dll", required=True)
     patch.add_argument("--manifest", required=True)
     patch.add_argument("--validation-dll", help="Plain candidate DLL corresponding to an externally encrypted --dll")
+    source_patch = commands.add_parser("patch-source", parents=[common], help="Compile saved Player source, plan changed methods and apply them")
+    source_patch.add_argument("--project", required=True)
+    source_patch.add_argument("--assembly", required=True)
+    source_patch.add_argument("--profile", required=True)
+    source_patch.add_argument("--compile-only", action="store_true", help="Compile and validate without applying a patch")
     commands.add_parser("patch-history", parents=[common])
     commands.add_parser("patch-capabilities", parents=[common])
     inspect = commands.add_parser("inspect-dll")
@@ -485,7 +503,13 @@ def main(argv=None):
             result = {"success": True, "forwardedPort": args.port}
         else:
             client = Client(args.url, args.token, args.timeout)
-            if args.command == "exec":
+            if args.command == "patch-source":
+                from patchsource_pipeline import prepare_and_apply
+                api = SimpleNamespace(**{name: globals()[name] for name in (
+                    "BridgeError", "target_references", "validate_profile_target", "compile_snippet",
+                    "metadata_tool", "patch_parameters", "dll_bytes", "sha256", "_compile_verified_snippet")})
+                result = prepare_and_apply(api, client, args.project, args.assembly, args.profile, args.compile_only)
+            elif args.command == "exec":
                 if not args.dll and not args.profile:
                     raise BridgeError("--profile is required for --code/--file. Export the exact target Player references first.")
                 if args.profile:

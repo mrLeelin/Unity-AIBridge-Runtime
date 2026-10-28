@@ -1,14 +1,17 @@
 {
   "name": "com.sh.aibridge.runtime",
   "displayName": "AI Bridge Runtime",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "unity": "2021.3",
   "description": "Independent Player debugging, remote code execution and HybridCLR method hotfix transport. Does not require AI Bridge Editor.",
   "author": {
     "name": "songhe (original AI Bridge); local runtime split"
   },
   "dependencies": {
-    "com.unity.ugui": "1.0.0"
+    "com.unity.ugui": "1.0.0",
+    "com.unity.modules.physics": "1.0.0",
+    "com.unity.modules.imageconversion": "1.0.0",
+    "com.unity.modules.screencapture": "1.0.0"
   },
   "files": [
     "Runtime",

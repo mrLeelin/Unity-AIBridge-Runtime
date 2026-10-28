@@ -842,6 +842,11 @@ namespace AIBridge.Runtime
 
         private static bool IsRuntimeCodeExecutionAvailable(out string reason)
         {
+#if !ENABLE_IL2CPP
+            // Mono Player 原生支持 Assembly.Load，不要求项目安装 HybridCLR。
+            reason = null;
+            return true;
+#else
             // Editor 使用 Mono 做协议测试；Player 的可用性独立于 Editor 包及其编译宏。
             if (Application.isEditor)
             {
@@ -858,6 +863,7 @@ namespace AIBridge.Runtime
             }
             reason = "Runtime code execution requires a HybridCLR-enabled Player. The native runtime must match the build.";
             return false;
+#endif
         }
 
         private IEnumerator CompleteRuntimeCodeTask(AIBridgeRuntimeCommand cmd, RuntimeCodeInvocationContext context, Task task)
@@ -1069,7 +1075,7 @@ namespace AIBridge.Runtime
             {
                 type = unwrapped.GetType().FullName,
                 message = unwrapped.Message,
-                stackTrace = unwrapped.StackTrace
+                stackTrace = RuntimeExceptionDetails.GetStackTrace(unwrapped)
             };
         }
 

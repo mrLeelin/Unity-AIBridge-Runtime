@@ -31,10 +31,12 @@ namespace AIBridge.Runtime.Editor
         public void OnPostprocessBuild(BuildReport report)
         {
             var config = Resources.Load<AIBridgeRuntimeConfig>(AIBridgeRuntimeConfig.ResourceName);
-            if (config == null || !config.AutoStart || report.summary.result != BuildResult.Succeeded)
+            if (config == null || !config.AutoStart || report == null
+                || report.summary.result == BuildResult.Failed || report.summary.result == BuildResult.Cancelled)
                 return;
-            var profilePath = ExportProfile(report);
-            Debug.Log("[AI Bridge Runtime] Player reference profile exported: " + profilePath);
+            // 此回调中的 result 可能仍是 Unknown。先保存本轮引用，防止下一次构建覆盖共享裁剪目录。
+            var snapshot = CaptureProfile(report);
+            Schedule(() => FinishAutomaticExport(report, snapshot, 0));
         }
 
         /// <summary>从本次成功构建的目标托管程序集生成离线 CLI 编译配置。</summary>
@@ -42,6 +44,13 @@ namespace AIBridge.Runtime.Editor
         {
             if (report == null || report.summary.result != BuildResult.Succeeded)
                 throw new InvalidOperationException("A successful Player BuildReport is required to export a Runtime Bridge profile.");
+            var snapshot = CaptureProfile(report);
+            try { return PublishProfile(snapshot); }
+            finally { DeleteSnapshot(snapshot); }
+        }
+
+        private static ProfileSnapshot CaptureProfile(BuildReport report)
+        {
             var projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
             var sources = FindPlayerReferences(report, projectRoot);
             if (!sources.ContainsKey("mscorlib.dll") || !sources.ContainsKey("UnityEngine.CoreModule.dll"))
@@ -54,24 +63,156 @@ namespace AIBridge.Runtime.Editor
             Directory.CreateDirectory(root);
             var ignore = Path.Combine(root, ".gitignore");
             if (!File.Exists(ignore)) File.WriteAllText(ignore, "*\n!.gitignore\n");
-            var output = Path.Combine(root, "profiles", buildId);
+            var output = Path.Combine(root, "pending-profiles", buildId + "_" + Guid.NewGuid().ToString("N"));
             var references = Path.Combine(output, "references");
             Directory.CreateDirectory(references);
-            var fingerprints = CopyPlayerReferences(sources, references);
-            var profile = new RuntimeReferenceProfile
+            try
             {
-                target = report.summary.platform.ToString(),
-                platform = report.summary.platform.ToString(),
-                buildId = buildId,
-                unityVersion = Application.unityVersion,
-                referenceDirectory = "references",
-                references = sources.Keys.OrderBy(v => v, StringComparer.Ordinal).ToArray(),
-                defineSymbols = GetPlayerDefines(report.summary.platform),
-                assemblyFingerprints = fingerprints.ToArray()
-            };
+                var profile = new RuntimeReferenceProfile
+                {
+                    target = report.summary.platform.ToString(),
+                    platform = report.summary.platform.ToString(),
+                    buildId = buildId,
+                    unityVersion = Application.unityVersion,
+                    referenceDirectory = "references",
+                    references = sources.Keys.OrderBy(v => v, StringComparer.Ordinal).ToArray(),
+                    defineSymbols = GetPlayerDefines(report.summary.platform),
+                    assemblyFingerprints = CopyPlayerReferences(sources, references).ToArray()
+                };
+                File.WriteAllText(Path.Combine(output, "profile.json"), JsonUtility.ToJson(profile, true));
+                AIBridgeRuntimePatchBuildSnapshot.Capture(projectRoot, output);
+                return new ProfileSnapshot { ProjectRoot = projectRoot, Directory = output, Profile = profile };
+            }
+            catch
+            {
+                DeleteSnapshot(new ProfileSnapshot { ProjectRoot = projectRoot, Directory = output });
+                throw;
+            }
+        }
+
+        private static void FinishAutomaticExport(BuildReport report, ProfileSnapshot snapshot, int pendingTicks)
+        {
+            if (BuildPipeline.isBuildingPlayer)
+            {
+                Schedule(() => FinishAutomaticExport(report, snapshot, pendingTicks));
+                return;
+            }
+            try
+            {
+                if (report == null || ReadBuildGuid(report.summary) != snapshot.Profile.buildId
+                    || report.summary.platform.ToString() != snapshot.Profile.target)
+                    throw new InvalidOperationException("Player BuildReport identity changed before Runtime Bridge profile publication.");
+                if (report.summary.result == BuildResult.Unknown && pendingTicks < 30)
+                {
+                    Schedule(() => FinishAutomaticExport(report, snapshot, pendingTicks + 1));
+                    return;
+                }
+                if (report.summary.result == BuildResult.Succeeded)
+                    Debug.Log("[AI Bridge Runtime] Player reference profile exported: " + PublishProfile(snapshot));
+                else if (report.summary.result == BuildResult.Unknown)
+                    throw new InvalidOperationException("Player build result was not finalized; Runtime Bridge profile was not published.");
+                DeleteSnapshot(snapshot);
+            }
+            catch (Exception exception)
+            {
+                Debug.LogError("[AI Bridge Runtime] Player profile export failed: " + exception.Message);
+                DeleteSnapshot(snapshot);
+            }
+        }
+
+        [InitializeOnLoadMethod]
+        private static void ResumePendingExports()
+        {
+            // 脚本重载后只恢复仍能与最新成功报告精确绑定的快照。
+            Schedule(() =>
+            {
+                var projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
+                var pending = Path.Combine(projectRoot, ".runtimebridge", "pending-profiles");
+                if (!Directory.Exists(pending)) return;
+                var report = BuildReport.GetLatestReport();
+                foreach (var directory in Directory.GetDirectories(pending))
+                {
+                    if (!IsSnapshotPath(projectRoot, directory)) continue;
+                    var snapshot = new ProfileSnapshot { ProjectRoot = projectRoot, Directory = directory };
+                    try
+                    {
+                        snapshot.Profile = JsonUtility.FromJson<RuntimeReferenceProfile>(File.ReadAllText(Path.Combine(directory, "profile.json")));
+                        if (report != null && snapshot.Profile != null
+                            && snapshot.Profile.buildId == ReadBuildGuid(report.summary)
+                            && snapshot.Profile.target == report.summary.platform.ToString())
+                            FinishAutomaticExport(report, snapshot, 0);
+                        else
+                            DeleteSnapshot(snapshot);
+                    }
+                    catch (Exception exception)
+                    {
+                        Debug.LogError("[AI Bridge Runtime] Pending Player profile recovery failed: " + exception.Message);
+                        DeleteSnapshot(snapshot);
+                    }
+                }
+            });
+        }
+
+        // 后台构建没有 Inspector 刷新时 delayCall 可能不执行；使用一次性 Editor update。
+        private static void Schedule(Action action)
+        {
+            EditorApplication.CallbackFunction callback = null;
+            callback = () => { EditorApplication.update -= callback; action(); };
+            EditorApplication.update += callback;
+        }
+
+        private static string PublishProfile(ProfileSnapshot snapshot)
+        {
+            var profile = snapshot.Profile;
+            if (profile == null || profile.referenceDirectory != "references" || profile.references == null
+                || profile.assemblyFingerprints == null || profile.references.Length != profile.assemblyFingerprints.Length
+                || Path.GetFileName(snapshot.Directory).Split('_')[0] != profile.buildId)
+                throw new InvalidOperationException("Invalid pending Runtime Bridge profile.");
+            var references = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var name in profile.references)
+            {
+                if (name != Path.GetFileName(name) || !name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("Invalid pending Player reference path.");
+                references.Add(name, Path.Combine(snapshot.Directory, "references", name));
+            }
+            var actual = FingerprintReferences(references);
+            if (JsonUtility.ToJson(new FingerprintSet { values = actual.ToArray() })
+                != JsonUtility.ToJson(new FingerprintSet { values = profile.assemblyFingerprints }))
+                throw new InvalidOperationException("Pending Player reference fingerprints changed before publication.");
+            var output = Path.Combine(snapshot.ProjectRoot, ".runtimebridge", "profiles", profile.buildId);
             var path = Path.Combine(output, "profile.json");
-            File.WriteAllText(path, JsonUtility.ToJson(profile, true));
+            if (Directory.Exists(output))
+            {
+                if (!File.Exists(path) || File.ReadAllText(path) != File.ReadAllText(Path.Combine(snapshot.Directory, "profile.json")))
+                    throw new InvalidOperationException("A different Runtime Bridge profile already exists for this Player build GUID.");
+                var publishedReferences = profile.references.ToDictionary(name => name,
+                    name => Path.Combine(output, "references", name), StringComparer.OrdinalIgnoreCase);
+                var published = FingerprintReferences(publishedReferences);
+                if (JsonUtility.ToJson(new FingerprintSet { values = published.ToArray() })
+                    != JsonUtility.ToJson(new FingerprintSet { values = profile.assemblyFingerprints }))
+                    throw new InvalidOperationException("Published Player reference fingerprints changed after export.");
+                return path;
+            }
+            Directory.CreateDirectory(Path.GetDirectoryName(output));
+            Directory.Move(snapshot.Directory, output);
             return path;
+        }
+
+        private static bool IsSnapshotPath(string projectRoot, string directory)
+        {
+            var pending = Path.GetFullPath(Path.Combine(projectRoot, ".runtimebridge", "pending-profiles"));
+            var absolute = Path.GetFullPath(directory);
+            var name = Path.GetFileName(absolute);
+            var separator = name.LastIndexOf('_');
+            Guid nonce;
+            return string.Equals(Path.GetDirectoryName(absolute), pending, StringComparison.OrdinalIgnoreCase)
+                && separator > 0 && Guid.TryParseExact(name.Substring(separator + 1), "N", out nonce);
+        }
+
+        private static void DeleteSnapshot(ProfileSnapshot snapshot)
+        {
+            if (IsSnapshotPath(snapshot.ProjectRoot, snapshot.Directory) && Directory.Exists(snapshot.Directory))
+                Directory.Delete(snapshot.Directory, true);
         }
 
         private static Dictionary<string, string> FindPlayerReferences(BuildReport report, string projectRoot)
@@ -116,16 +257,21 @@ namespace AIBridge.Runtime.Editor
 
         private static List<AssemblyFingerprint> CopyPlayerReferences(Dictionary<string, string> sources, string destination)
         {
+            foreach (var pair in sources.OrderBy(v => v.Key, StringComparer.Ordinal))
+                File.Copy(pair.Value, Path.Combine(destination, pair.Key), true);
+            return FingerprintReferences(sources.ToDictionary(pair => pair.Key, pair => Path.Combine(destination, pair.Key)));
+        }
+
+        private static List<AssemblyFingerprint> FingerprintReferences(Dictionary<string, string> sources)
+        {
             var result = new List<AssemblyFingerprint>();
             foreach (var pair in sources.OrderBy(v => v.Key, StringComparer.Ordinal))
             {
-                var output = Path.Combine(destination, pair.Key);
-                File.Copy(pair.Value, output, true);
                 Guid mvid;
-                if (!ManagedAssemblyIdentity.TryReadMvid(output, out mvid))
+                if (!ManagedAssemblyIdentity.TryReadMvid(pair.Value, out mvid))
                     throw new BuildFailedException("Target reference is not a readable managed assembly: " + pair.Key);
                 string hash;
-                using (var stream = File.OpenRead(output))
+                using (var stream = File.OpenRead(pair.Value))
                 using (var sha = SHA256.Create())
                     hash = BitConverter.ToString(sha.ComputeHash(stream)).Replace("-", string.Empty).ToLowerInvariant();
                 result.Add(new AssemblyFingerprint { name = Path.GetFileNameWithoutExtension(pair.Key), mvid = mvid.ToString("D"), sha256 = hash });
@@ -168,6 +314,19 @@ namespace AIBridge.Runtime.Editor
                 default: return null;
             }
             return Path.Combine(root, "Library", "Bee", "artifacts", name, "ManagedStripped");
+        }
+
+        [Serializable]
+        private sealed class FingerprintSet
+        {
+            public AssemblyFingerprint[] values;
+        }
+
+        private sealed class ProfileSnapshot
+        {
+            public string ProjectRoot;
+            public string Directory;
+            public RuntimeReferenceProfile Profile;
         }
 
         [Serializable]

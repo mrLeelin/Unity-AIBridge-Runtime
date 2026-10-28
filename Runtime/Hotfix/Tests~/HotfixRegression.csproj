@@ -13,6 +13,7 @@
     <Compile Include="../../AIBridgeRuntimeData.cs" Link="AIBridgeRuntimeData.cs" />
     <Compile Include="../../AIBridgeRuntimeSettings.cs" Link="AIBridgeRuntimeSettings.cs" />
     <Compile Include="../../IAIBridgeHandler.cs" Link="IAIBridgeHandler.cs" />
+    <Compile Include="../../Diagnostics/RuntimeExceptionDetails.cs" Link="RuntimeExceptionDetails.cs" />
     <ProjectReference Include="FakeHybridCLR/FakeHybridCLR.csproj" />
   </ItemGroup>
 </Project>

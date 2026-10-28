@@ -13,25 +13,36 @@
 
 ## 安装与首次出包
 
-在 Unity Package Manager 中选择 **Add package from git URL**，使用：
-
-```text
-https://github.com/mrLeelin/Unity-AIBridge-Runtime.git#v1.0.1
-```
-
-私有仓库需要当前机器的 Git 凭据具备访问权限。也可以克隆仓库，再通过 **Add package from disk** 选择根目录的 `package.json`。
+在 Unity Package Manager 中通过 **Add package from tarball** 安装发布的 `.tgz` 包；本地开发也可以通过 **Add package from disk** 选择独立插件仓库根目录的 `package.json`。安装来源不依赖任何示例工程。
 
 1. 仅安装 Runtime 的 UPM 包。Editor 自动化包可保持未安装状态。
-2. 打开 `Window > AI Bridge Runtime > Settings`，点击 **Create Runtime Configuration**，创建 `Assets/Resources/AIBridgeRuntimeConfig.asset`。
-3. 配置 `AutoStart` 和 Runtime settings。默认未启用自动启动；HTTP 为 `127.0.0.1:27182`，LAN 发现关闭，配置生成随机会话 Token。
-4. 先正常安装与当前项目匹配的 HybridCLR 原生运行时，再构建 **Development Build** 测试包。Runtime 代码执行需要 HybridCLR；实时方法补丁需要支持 `HotfixAssembly` 的商业版本。
-5. 成功构建且启用 AutoStart 后，包内构建工具自动导出 `.runtimebridge/profiles/<PlayerBuildGUID>/profile.json` 和该 Player 的 `references/*.dll`。
+2. 执行 `Window > AI Bridge Runtime > Prepare Current Project`，或在 Settings 中点击 **准备当前项目**。插件创建自己的 `Assets/Resources/AIBridgeRuntimeConfig.asset` 并启用开发包自动启动，不添加项目 C#、场景组件或业务回调。
+3. 根据需要调整插件配置。默认 HTTP 为 `127.0.0.1:27182`、LAN 发现关闭，会话 Token 自动生成。无需复制示例工程的构建、加载或基线脚本。
+4. 使用项目原有流程构建 **Development Build**。Mono Player 可以直接执行调试 DLL；IL2CPP 动态代码执行需要匹配的 HybridCLR 原生运行时；方法热修复还需要商业版 `HotfixAssembly`。插件读取现有解释器/DHE 配置，不替项目增删热更程序集或接管业务加载流程。
+5. 开发构建会自动准备受支持的本地 HybridCLR 模块身份读取支持、保存原始 Player DLL，并导出 `.runtimebridge/profiles/<PlayerBuildGUID>/profile.json`。后台构建通过一次性 Editor update 发布 profile，不依赖 Inspector 刷新。
+6. 在 Runtime 窗口连接设备、选择目标程序集。后续保存源码并点击 **编译并应用**，DLL、基线、清单和补丁 ID 自动管理。
+
+CI 可直接调用 `-executeMethod AIBridge.Runtime.Editor.AIBridgeRuntimeProjectIntegration.PrepareCurrentProject` 准备插件配置，无需新增项目 Editor 脚本。正式发布包请关闭 AutoStart；插件不会在发布 Player 中启动调试服务。
 
 构建配置和引用导出是首次出包/更新测试包时的步骤；后续连接、执行和发送补丁不启动 Editor。引用导出失败会明确报错，不会使用 `Library/ScriptAssemblies` 替代真机引用。
 
 启用 AutoStart 后，Development Player 中已有的旧 Runtime 场景组件也会读取这份独立配置，场景资产不会被改写。项目显式调用 `AIBridgeRuntimeBootstrap.Start(settings)` 时，以传入的设置为准。Editor Play Mode 可用场景组件做协议检查，但不会自动启动真机 Hotfix。
 
 手机执行脚本无需携带 Roslyn 编译器。电脑端编译和补丁检查使用 Python 3 标准库与本机 .NET SDK；无需额外 Python 包或 NuGet 包。建议安装 .NET SDK 8 或更新版本，同时提供 .NET 8 运行时供元数据检查工具运行。
+
+### IL2CPP 运行时准备
+
+Development 构建会额外保留 C# 片段包装器使用的 async builder、awaiter 和 Task 成员，避免目标引用被裁剪后出现 `CS0656: AsyncTaskMethodBuilder<T>.AwaitOnCompleted`。发布构建不使用这份额外保留文件。
+
+基础场景调试还保留 `GameObject`、`PrimitiveType`、`Transform`、`Light`、Renderer/Material 及创建基础几何体所需的 MeshFilter、MeshRenderer、BoxCollider 等类型，支持 `CreatePrimitive`、`LookAt` 和灯光属性设置。其他业务类型、成员和资源仍由项目负责保留与打包。片段编译以实际 Player 引用为准；主包已经裁掉的 API 不能通过改用 Editor DLL 或补充元数据来恢复，必须调整保留规则后重新构建。
+
+插件接入不要求业务项目额外编写 AOT 元数据初始化代码。其 async/Task 调试入口所需成员由包内开发构建保留规则提供；空场景验收没有执行示例的 AOT 元数据加载代码。调用项目业务泛型 API 时，仍受项目实际保留和已加载的 AOT 元数据范围约束。补充元数据不能恢复已被裁掉的 API，也不能替代精确 Player profile。
+
+方法热修复需要真实的 `ManifestModule.ModuleVersionId`。包内构建兼容层支持从已加载解释器 PE 读取 MVID；原始 DHE 则使用本轮 Player 编译产物生成并编进原生包的身份索引，仅对已加载且被原生运行时认定为 DHE 的 image 生效。已经加载差分 DLL 的 DHE 使用该实际 image 的 MVID，不会用原始索引冒充当前身份。普通 AOT 不会获得 DHE 的回退身份，也不会被自动转换成热更程序集。
+
+原生兼容层只操作项目本地 HybridCLR 工具链，修改前校验实现并按哈希备份到 `.runtimebridge/native-support/backups/`。未知源码布局、共享/全局工具链或缺失的能力会明确提示并保留项目原来的工具链；不能把所有原生版本和平台都当成已经验收。关闭调试或重新构建时会清除旧 DHE 索引，避免把旧 MVID 带入新包。
+
+源码编译按 profile 绑定 Android、iOS、Windows、Linux、macOS 的平台宏，并识别 Windows/Linux 的 Editor/Data 与 macOS 的 Unity.app/Contents 编译器。当前真实设备验收覆盖 Unity 6000.3.6f1、Windows 构建主机、Android ARM64 和商业 HybridCLR；其他平台的参数处理有主机回归检查，尚未做设备验收。
 
 ## Runtime 管理窗口
 
@@ -41,12 +52,14 @@ https://github.com/mrLeelin/Unity-AIBridge-Runtime.git#v1.0.1
 | --- | --- |
 | 设备连接 | ADB 设备列表、USB 转发、手动 LAN 发现、HTTP 连接状态、场景 Runtime 配置 |
 | 执行代码 | 选择对应 Player profile 后编译 C# 片段，或直接发送已有 DLL |
-| 方法热修复 | 检查真实 Player 热修复能力，选择补丁 DLL/manifest，应用补丁和读取历史 |
+| 方法热修复 | 保存目标程序集，编译当前源码并直接应用到真机；高级选项可手动应用已有 DLL |
 | 日志 | 按类型和条数读取手机日志 |
 
 窗口使用本包独立桌面 CLI，Token 仅保存在窗口内存中并以密码字段显示。连接、编译与执行异步进行，不阻塞 Unity 界面。关闭窗口不会撤回已发往手机的请求。Scene Runtime 按钮仅在用户点击时修改当前场景，支持 Undo，不自动保存场景。
 
 这个窗口是可选的图形界面；关闭 Unity Editor 后，仍可继续使用下述 CLI 连接手机。
+
+窗口使用工作台布局：左侧切换连接、执行、热修复和日志，顶部持续显示当前目标；Python、ADB、Token、端口等参数默认收在高级连接设置中。连接成功后按 profile 文件中的真实 Build ID 与平台匹配构建引用，CLI 仍会独立检查全部指纹。代码支持 Ctrl/Cmd+Enter 执行，示例按钮只填入代码。结果优先展示返回值（包含 `0`、`false` 和 `null`），完整 JSON 可展开或复制；日志以可读条目展示并保留堆栈。
 
 ## Android USB 连接
 
@@ -96,6 +109,12 @@ python $tool exec --profile '.runtimebridge/profiles/<build-guid>/profile.json' 
 重复操作建议保存并复用固定 DLL。每次新编译都会产生新程序集，加载到进程后不能通过清理字典卸载；必要时重启测试包释放程序集内存。
 
 ## 实时替换已有方法
+
+常用流程：连接测试 Player，在“方法热修复”中选一次目标程序集，之后保存 C# 并点击 **编译并应用**。编译完成会自动把最新方法补丁发送到当前连接的真机，无需重新选择 DLL、基线或清单。窗口会按项目记住目标程序集，并在 Unity 脚本重载后恢复原有连接、匹配当前 Player 的构建 profile。高级手动区域也会同步显示本次生成的 DLL 和清单。
+
+自动流程使用该 Android Development Player 的编译参数、对应 Unity 版本的 NetStandard 编译契约以及已核对的运行时引用，保留源生成器需要的源码相对路径。工具根据设备上已加载程序集的真实 MVID 查找原始基线，检查结构差异、生成方法清单和补丁 ID 后再发送。重复应用相同代码会去重；将方法体改回基线后再次应用也能恢复旧方法体。
+
+这仍是当前进程中的方法热修复，仅支持兼容的方法体变化。重启自动应用需要单独的设备缓存流程。
 
 先对真实业务程序集做完整编译，保留原程序集名及所有类型/成员结构。不要把替换方法包装成另一个临时调试程序集。例：只将 `Game.Combat.DamageCalculator.Calculate(Int32)` 的方法体从旧逻辑改成新逻辑。
 

@@ -106,6 +106,9 @@ var foreignThread = Task.Run(() => handler.HandleCommand(Request("Int32 Compute(
 Check(!foreignThread.Success, "patch application is restricted to constructor's Unity thread");
 settings.enableRuntimeCodeExecution = false;
 Check(!handler.HandleCommand(Request()).Success, "disabled runtime code execution blocks patches");
+Check(RuntimeExceptionDetails.GetStackTrace(new InvalidOperationException()) == null, "an unthrown exception retains its empty stack trace");
+Check(RuntimeExceptionDetails.GetStackTrace(new UnsupportedStackTraceException()).Contains("NotSupportedException"),
+    "unsupported IL2CPP stack trace extraction cannot interrupt command completion");
 Console.WriteLine("Passed " + passed + " host-side handler regression checks; no real IL2CPP native implementation was exercised.");
 return 0;
 
@@ -114,4 +117,9 @@ public sealed class Fixture
     public Fixture(int value) { }
     public int Compute(int value) => value + 1;
     public int Compute(string value) => value.Length;
+}
+
+public sealed class UnsupportedStackTraceException : Exception
+{
+    public override string StackTrace => throw new NotSupportedException("AOT stack trace metadata is unavailable");
 }

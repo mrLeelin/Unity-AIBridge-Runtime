@@ -1,0 +1,43 @@
+bool TryReadModuleVersionId(byte* destination)
+		{
+			if (destination == nullptr || _imageData == nullptr || _streamGuidHeap.data == nullptr ||
+				_streamGuidHeap.size < 16 || _streamGuidHeap.size % 16 != 0)
+				return false;
+			const uintptr_t imageAddress = reinterpret_cast<uintptr_t>(_imageData);
+			const uintptr_t heapAddress = reinterpret_cast<uintptr_t>(_streamGuidHeap.data);
+			if (heapAddress < imageAddress)
+				return false;
+			const uintptr_t heapOffset = heapAddress - imageAddress;
+			if (heapOffset > _imageLength || _streamGuidHeap.size > _imageLength - heapOffset)
+				return false;
+
+			const Table& module = GetTable(TableType::MODULE);
+			const uintptr_t tableAddress = reinterpret_cast<uintptr_t>(module.data);
+			if (module.rowNum != 1 || module.data == nullptr || module.rowMetaDataSize == 0 || tableAddress < imageAddress)
+				return false;
+			const uintptr_t tableOffset = tableAddress - imageAddress;
+			if (tableOffset > _imageLength || module.rowMetaDataSize > _imageLength - tableOffset)
+				return false;
+			const auto& schema = GetRowSchema(TableType::MODULE);
+			if (schema.size() != 5)
+				return false;
+			for (const ColumnOffsetSize& column : schema)
+			{
+				if ((column.size != 2 && column.size != 4) || column.offset > module.rowMetaDataSize ||
+					column.size > module.rowMetaDataSize - column.offset)
+					return false;
+			}
+
+			const uint32_t mvid = ReadModule(1).mvid;
+			if (mvid == 0 || mvid > _streamGuidHeap.size / 16)
+				return false;
+			const byte* source = _streamGuidHeap.data + static_cast<size_t>(mvid - 1) * 16;
+			byte any = 0;
+			for (size_t i = 0; i < 16; ++i)
+				any |= source[i];
+			if (any == 0)
+				return false;
+			// Guid(byte[]) uses the same raw ECMA-335 GUID byte order as Mono.
+			memcpy(destination, source, 16);
+			return true;
+		}

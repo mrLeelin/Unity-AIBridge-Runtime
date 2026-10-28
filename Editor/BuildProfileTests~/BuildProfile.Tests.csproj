@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../AIBridgeRuntimeBuildProfile.cs" Link="AIBridgeRuntimeBuildProfile.cs" />
+    <Compile Include="../ManagedAssemblyIdentity.cs" Link="ManagedAssemblyIdentity.cs" />
+    <Compile Include="../AIBridgeRuntimePatchBuildSnapshot.cs" Link="AIBridgeRuntimePatchBuildSnapshot.cs" />
+    <Compile Include="../AIBridgeRuntimeLinkerProcessor.cs" Link="AIBridgeRuntimeLinkerProcessor.cs" />
+  </ItemGroup>
+</Project>

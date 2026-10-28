@@ -1,0 +1,23 @@
+    void RuntimeModule::GetGuidInternal(intptr_t module, Il2CppArray* guid)
+    {
+        // AIBRIDGE_MODULE_MVID_V1: identity comes from this image or this native build.
+        if (guid == NULL)
+            vm::Exception::Raise(vm::Exception::GetArgumentNullException("guid"));
+        if (vm::Array::GetLength(guid) != 16)
+            vm::Exception::Raise(vm::Exception::GetArgumentException("guid", "A module GUID requires exactly 16 bytes."));
+        const Il2CppImage* image = reinterpret_cast<const Il2CppImage*>(module);
+        if (image == NULL)
+            vm::Exception::Raise(vm::Exception::GetArgumentNullException("module"));
+        uint8_t* destination = reinterpret_cast<uint8_t*>(vm::Array::GetFirstElementAddress(guid));
+        if (!hybridclr::metadata::IsInterpreterImage(image))
+        {
+            if (aibridge_runtime::TryReadOriginalDheMvid(image, destination))
+                return;
+            vm::Exception::Raise(vm::Exception::GetNotSupportedException(
+                "This AOT image has no verified original module identity in this Player build."));
+        }
+        hybridclr::metadata::InterpreterImage* loaded = hybridclr::metadata::MetadataModule::GetImage(image);
+        if (loaded == NULL || !loaded->GetRawImage().TryReadModuleVersionId(destination))
+            vm::Exception::Raise(vm::Exception::GetBadImageFormatException(
+                "The loaded interpreter image has an invalid or missing Module.Mvid GUID."));
+    }
