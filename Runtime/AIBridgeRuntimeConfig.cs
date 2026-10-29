@@ -10,6 +10,23 @@ namespace AIBridge.Runtime
     public sealed class AIBridgeRuntimeConfig : ScriptableObject
     {
         public const string ResourceName = "AIBridgeRuntimeConfig";
+#if UNITY_EDITOR
+        public const string ConfigAssetPath = "Assets/AIBridgeRuntime/Configuration/AIBridgeRuntimeConfig.asset";
+#endif
+
+        /// <summary>Editor 读取项目配置；开发 Player 从构建注入的预加载资源读取配置。</summary>
+        public static AIBridgeRuntimeConfig Load()
+        {
+#if UNITY_EDITOR
+            return UnityEditor.AssetDatabase.LoadAssetAtPath<AIBridgeRuntimeConfig>(ConfigAssetPath)
+                ?? Resources.Load<AIBridgeRuntimeConfig>(ResourceName);
+#else
+            var configurations = Resources.FindObjectsOfTypeAll<AIBridgeRuntimeConfig>();
+            if (configurations.Length > 1)
+                throw new InvalidOperationException("Multiple AI Bridge Runtime configurations were preloaded.");
+            return configurations.Length == 1 ? configurations[0] : null;
+#endif
+        }
 
         [SerializeField] private bool _autoStart;
         [SerializeField] private AIBridgeRuntimeSettings _settings = CreateDefaultSettings();

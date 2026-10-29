@@ -54,6 +54,12 @@ namespace AIBridge.Runtime.Editor
     <type fullname=""UnityEngine.Collider"" preserve=""all"" />
     <type fullname=""UnityEngine.BoxCollider"" preserve=""all"" />
   </assembly>
+  <assembly fullname=""HybridCLR.Runtime"" ignoreIfMissing=""1"">
+    <type fullname=""HybridCLR.RuntimeApi"" preserve=""all"" />
+    <type fullname=""HybridCLR.RuntimeOptionId"" preserve=""all"" />
+    <type fullname=""HybridCLR.HotfixType"" preserve=""all"" />
+    <type fullname=""HybridCLR.HotfixMethod"" preserve=""all"" />
+  </assembly>
 </linker>";
     }
 }

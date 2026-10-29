@@ -65,7 +65,7 @@ try
         var data = json.RootElement;
         var fingerprint = data.GetProperty("assemblyFingerprints").EnumerateArray().Single(v => v.GetProperty("name").GetString() == "mscorlib");
         Check(fingerprint.GetProperty("sha256").GetString() == originalHash, "reference fingerprints remain bound to the callback snapshot after ManagedStripped is overwritten");
-        Check(data.GetProperty("defineSymbols").EnumerateArray().Select(v => v.GetString()).SequenceEqual(new[] { "UNITY_ANDROID" }), "Player defines are snapshotted and exclude every UNITY_EDITOR variant");
+        Check(data.GetProperty("defineSymbols").EnumerateArray().Select(v => v.GetString()).SequenceEqual(new[] { "DEVELOPMENT_BUILD", "UNITY_ANDROID" }), "Player defines bind DEVELOPMENT_BUILD to report options and exclude every UNITY_EDITOR variant");
         Check(!data.GetProperty("references").EnumerateArray().Any(v => v.GetString().Contains("Editor")), "Editor assemblies are excluded from the snapshot");
     }
     var copied = Path.Combine(Path.GetDirectoryName(ProfilePath(successful)), "references/mscorlib.dll");

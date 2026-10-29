@@ -19,18 +19,18 @@ namespace AIBridge.Runtime.Editor
 
         public void OnPreprocessBuild(BuildReport report)
         {
-            var config = Resources.Load<AIBridgeRuntimeConfig>(AIBridgeRuntimeConfig.ResourceName);
+            if ((report.summary.options & BuildOptions.Development) == 0) return;
+            var config = AIBridgeRuntimeConfig.Load();
             if (config == null || !config.AutoStart)
                 return;
-            if ((report.summary.options & BuildOptions.Development) == 0)
-                throw new BuildFailedException("AI Bridge Runtime Auto Start requires a Development Build. Disable Auto Start for a release Player.");
             if (string.IsNullOrWhiteSpace(config.Settings.authToken))
                 throw new BuildFailedException("AI Bridge Runtime requires a session token. Generate one in Window > AI Bridge Runtime > Settings.");
         }
 
         public void OnPostprocessBuild(BuildReport report)
         {
-            var config = Resources.Load<AIBridgeRuntimeConfig>(AIBridgeRuntimeConfig.ResourceName);
+            if (report == null || (report.summary.options & BuildOptions.Development) == 0) return;
+            var config = AIBridgeRuntimeConfig.Load();
             if (config == null || !config.AutoStart || report == null
                 || report.summary.result == BuildResult.Failed || report.summary.result == BuildResult.Cancelled)
                 return;
@@ -76,7 +76,7 @@ namespace AIBridge.Runtime.Editor
                     unityVersion = Application.unityVersion,
                     referenceDirectory = "references",
                     references = sources.Keys.OrderBy(v => v, StringComparer.Ordinal).ToArray(),
-                    defineSymbols = GetPlayerDefines(report.summary.platform),
+                    defineSymbols = GetPlayerDefines(report.summary.platform, report.summary.options),
                     assemblyFingerprints = CopyPlayerReferences(sources, references).ToArray()
                 };
                 File.WriteAllText(Path.Combine(output, "profile.json"), JsonUtility.ToJson(profile, true));
@@ -279,13 +279,14 @@ namespace AIBridge.Runtime.Editor
             return result;
         }
 
-        private static string[] GetPlayerDefines(BuildTarget target)
+        private static string[] GetPlayerDefines(BuildTarget target, BuildOptions options)
         {
             if (target != EditorUserBuildSettings.activeBuildTarget)
                 throw new BuildFailedException("Active build target changed before Runtime Bridge profile export; exact Player defines are unavailable.");
             return CompilationPipeline.GetAssemblies(AssembliesType.Player)
                 .SelectMany(assembly => assembly.defines)
-                .Where(value => !value.StartsWith("UNITY_EDITOR", StringComparison.Ordinal))
+                .Where(value => !value.StartsWith("UNITY_EDITOR", StringComparison.Ordinal) && value != "DEVELOPMENT_BUILD")
+                .Concat((options & BuildOptions.Development) != 0 ? new[] { "DEVELOPMENT_BUILD" } : Array.Empty<string>())
                 .Distinct(StringComparer.Ordinal).OrderBy(value => value, StringComparer.Ordinal).ToArray();
         }
 

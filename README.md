@@ -16,13 +16,15 @@
 在 Unity Package Manager 中通过 **Add package from tarball** 安装发布的 `.tgz` 包；本地开发也可以通过 **Add package from disk** 选择独立插件仓库根目录的 `package.json`。安装来源不依赖任何示例工程。
 
 1. 仅安装 Runtime 的 UPM 包。Editor 自动化包可保持未安装状态。
-2. 执行 `Window > AI Bridge Runtime > Prepare Current Project`，或在 Settings 中点击 **准备当前项目**。插件创建自己的 `Assets/Resources/AIBridgeRuntimeConfig.asset` 并启用开发包自动启动，不添加项目 C#、场景组件或业务回调。
+2. 执行 `Window > AI Bridge Runtime > Prepare Current Project`，或在 Settings 中点击 **准备当前项目**。插件创建自己的 `Assets/AIBridgeRuntime/Configuration/AIBridgeRuntimeConfig.asset` 并启用开发包自动启动，不添加项目 C#、场景组件或业务回调。
 3. 根据需要调整插件配置。默认 HTTP 为 `127.0.0.1:27182`、LAN 发现关闭，会话 Token 自动生成。无需复制示例工程的构建、加载或基线脚本。
 4. 使用项目原有流程构建 **Development Build**。Mono Player 可以直接执行调试 DLL；IL2CPP 动态代码执行需要匹配的 HybridCLR 原生运行时；方法热修复还需要商业版 `HotfixAssembly`。插件读取现有解释器/DHE 配置，不替项目增删热更程序集或接管业务加载流程。
 5. 开发构建会自动准备受支持的本地 HybridCLR 模块身份读取支持、保存原始 Player DLL，并导出 `.runtimebridge/profiles/<PlayerBuildGUID>/profile.json`。后台构建通过一次性 Editor update 发布 profile，不依赖 Inspector 刷新。
 6. 在 Runtime 窗口连接设备、选择目标程序集。后续保存源码并点击 **编译并应用**，DLL、基线、清单和补丁 ID 自动管理。
 
-CI 可直接调用 `-executeMethod AIBridge.Runtime.Editor.AIBridgeRuntimeProjectIntegration.PrepareCurrentProject` 准备插件配置，无需新增项目 Editor 脚本。正式发布包请关闭 AutoStart；插件不会在发布 Player 中启动调试服务。
+CI 可直接调用 `-executeMethod AIBridge.Runtime.Editor.AIBridgeRuntimeProjectIntegration.PrepareCurrentProject` 准备插件配置，无需新增项目 Editor 脚本。配置保存在普通资源目录中，构建流程仅向 Development Player 的预加载资源临时加入配置，并在成功、失败或取消后恢复项目设置。旧版 Resources 配置会保留 GUID 自动迁移。
+
+正式发布包无需关闭 AutoStart。Runtime 程序集通过 `UNITY_EDITOR || DEVELOPMENT_BUILD` 编译约束排除；构建场景副本中的插件组件自动移除，插件额外的 linker 保留规则也只用于开发包。Release 构建会恢复插件拥有的 HybridCLR 原生改动，并检查本轮程序集列表、Resources/预加载资源依赖、场景依赖及最终产物；发现调试代码或配置残留时构建失败。业务代码若直接引用 Runtime 类型，对应代码或程序集也应使用相同编译条件。Resources 中的业务 Prefab 若依赖 Bridge，会明确阻止发布构建，需要移除该依赖。
 
 构建配置和引用导出是首次出包/更新测试包时的步骤；后续连接、执行和发送补丁不启动 Editor。引用导出失败会明确报错，不会使用 `Library/ScriptAssemblies` 替代真机引用。
 
@@ -40,7 +42,7 @@ Development 构建会额外保留 C# 片段包装器使用的 async builder、aw
 
 方法热修复需要真实的 `ManifestModule.ModuleVersionId`。包内构建兼容层支持从已加载解释器 PE 读取 MVID；原始 DHE 则使用本轮 Player 编译产物生成并编进原生包的身份索引，仅对已加载且被原生运行时认定为 DHE 的 image 生效。已经加载差分 DLL 的 DHE 使用该实际 image 的 MVID，不会用原始索引冒充当前身份。普通 AOT 不会获得 DHE 的回退身份，也不会被自动转换成热更程序集。
 
-原生兼容层只操作项目本地 HybridCLR 工具链，修改前校验实现并按哈希备份到 `.runtimebridge/native-support/backups/`。未知源码布局、共享/全局工具链或缺失的能力会明确提示并保留项目原来的工具链；不能把所有原生版本和平台都当成已经验收。关闭调试或重新构建时会清除旧 DHE 索引，避免把旧 MVID 带入新包。
+原生兼容层只操作项目本地 HybridCLR 工具链，修改前校验实现并按哈希备份到 `.runtimebridge/native-support/backups/`。未知源码布局、共享/全局工具链或缺失的能力会明确提示并保留项目原来的工具链；不能把所有原生版本和平台都当成已经验收。开发包重新构建时会清除旧 DHE 索引，避免把旧 MVID 带入新包；Release 构建在原生编译前撤销已识别的插件改动，遇到被修改而无法安全恢复的插件源码时直接构建失败。
 
 源码编译按 profile 绑定 Android、iOS、Windows、Linux、macOS 的平台宏，并识别 Windows/Linux 的 Editor/Data 与 macOS 的 Unity.app/Contents 编译器。当前真实设备验收覆盖 Unity 6000.3.6f1、Windows 构建主机、Android ARM64 和商业 HybridCLR；其他平台的参数处理有主机回归检查，尚未做设备验收。
 

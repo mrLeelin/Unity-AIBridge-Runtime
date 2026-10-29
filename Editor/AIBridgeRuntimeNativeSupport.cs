@@ -78,6 +78,111 @@ namespace AIBridge.Runtime.Editor
             WriteWithRollback(projectRoot, changes);
         }
 
+        /// <summary>发布构建前移除已知的 AI Bridge 原生支持，保留项目其它 HybridCLR 改动。</summary>
+        internal static void RemoveSupport(string projectRoot, string libil2cpp, string payloadDirectory)
+        {
+            ValidateLocalPath(projectRoot, libil2cpp);
+            if (!Directory.Exists(libil2cpp)) return;
+            var modulePath = Path.Combine(libil2cpp, ModulePath);
+            var rawPath = Path.Combine(libil2cpp, RawPath);
+            var indexPath = Path.Combine(libil2cpp, IndexPath);
+            foreach (var path in new[] { modulePath, rawPath, indexPath }) ValidateLocalPath(projectRoot, path);
+            var module = File.Exists(modulePath) ? File.ReadAllText(modulePath) : string.Empty;
+            var raw = File.Exists(rawPath) ? File.ReadAllText(rawPath) : string.Empty;
+            var installed = File.ReadAllText(Path.Combine(payloadDirectory, "RuntimeModuleMvid.txt")).Trim();
+            var legacy = File.ReadAllText(Path.Combine(payloadDirectory, "LegacyRuntimeModuleMvid.txt")).Trim();
+            var reader = File.ReadAllText(Path.Combine(payloadDirectory, "RawImageMvid.txt")).Trim();
+            var current = module.Contains("void RuntimeModule::GetGuidInternal(")
+                ? ReadFunction(module, "void RuntimeModule::GetGuidInternal(") : null;
+            var recognized = current != null && (Normalize(current) == Normalize(installed) || Normalize(current) == Normalize(legacy));
+            var hasIndex = File.Exists(indexPath);
+            var hasMarker = HasBridgeMarker(module);
+            var currentReader = raw.Contains("bool TryReadModuleVersionId(")
+                ? ReadFunction(raw, "bool TryReadModuleVersionId(") : null;
+            var recognizedReader = currentReader != null && Normalize(currentReader) == Normalize(reader);
+            if (!recognized && !recognizedReader && !hasIndex && !hasMarker) return;
+            if (hasMarker && !recognized && (current == null || !IsStockFunction(current)))
+                throw new InvalidOperationException("AI Bridge native identity code has changed; Release build cannot remove it safely.");
+            if ((recognized || hasMarker || hasIndex) && currentReader != null && !recognizedReader)
+                throw new InvalidOperationException("AI Bridge native MVID reader has changed; Release build cannot remove it safely.");
+            if (hasIndex) ValidateGeneratedIndex(File.ReadAllText(indexPath));
+            var changes = new Dictionary<string, string>();
+            if (recognized) module = module.Replace(current, FindStockFunction(projectRoot, current));
+            module = RemoveBridgeIncludes(module);
+            if (HasBridgeMarker(module))
+                throw new InvalidOperationException("AI Bridge native markers remain; Release build was stopped.");
+            if (File.Exists(modulePath)) changes[modulePath] = MatchNewlines(module, File.ReadAllText(modulePath));
+            if (recognizedReader)
+            {
+                raw = raw.Replace(currentReader, string.Empty);
+                changes[rawPath] = MatchNewlines(raw, File.ReadAllText(rawPath));
+            }
+            if (hasIndex) changes[indexPath] = null;
+            WriteWithRollback(projectRoot, changes);
+        }
+
+        private static bool HasBridgeMarker(string source) => source.Contains("AIBRIDGE_MODULE_MVID")
+            || source.Contains("AIBridgeModuleMvids") || source.Contains("aibridge_runtime::")
+            || source.Contains(".TryReadModuleVersionId(")
+            || source.Contains("ModuleVersionId is supported only for loaded HybridCLR interpreter images");
+
+        private static string RemoveBridgeIncludes(string module)
+        {
+            var normalized = module.Replace("\r\n", "\n");
+            var prefix = "#include \"hybridclr/metadata/MetadataModule.h\"\n";
+            var assembly = "#include \"hybridclr/metadata/Assembly.h\"\n";
+            var index = "#include \"hybridclr/generated/AIBridgeModuleMvids.h\"\n";
+            // 新版安装器整块前置这些 include；只移除可确认属于该块的普通头文件引用。
+            foreach (var block in new[] { prefix + assembly + index, prefix + index })
+                if (normalized.StartsWith(block, StringComparison.Ordinal)) normalized = normalized.Substring(block.Length);
+            normalized = Regex.Replace(normalized, @"^[ \t]*#include[ \t]+""hybridclr/generated/AIBridgeModuleMvids\.h""[ \t]*(?:\n|$)", string.Empty, RegexOptions.Multiline);
+            return normalized;
+        }
+
+        private static string FindStockFunction(string projectRoot, string installed)
+        {
+            var backups = Path.Combine(projectRoot, ".runtimebridge", "native-support", "backups");
+            ValidateLocalPath(projectRoot, backups);
+            if (Directory.Exists(backups))
+            {
+                foreach (var directory in Directory.GetDirectories(backups).OrderByDescending(Directory.GetLastWriteTimeUtc))
+                {
+                    ValidateLocalPath(projectRoot, directory);
+                    var candidate = Path.Combine(directory, "RuntimeModule.cpp");
+                    if (!File.Exists(candidate)) continue;
+                    ValidateLocalPath(projectRoot, candidate);
+                    var source = File.ReadAllText(candidate);
+                    if (!source.Contains("void RuntimeModule::GetGuidInternal(")) continue;
+                    var function = ReadFunction(source, "void RuntimeModule::GetGuidInternal(");
+                    if (IsStockFunction(function)) return function;
+                }
+            }
+            // 旧版手工安装没有快照时，恢复 Unity 原有的“不支持”语义，不引入额外原生能力。
+            var signature = installed.Substring(0, installed.IndexOf('{')).TrimEnd();
+            return signature + "\n{\n    NOT_SUPPORTED_IL2CPP(Module::GetGuidInternal, \"ModuleVersionId is not supported by IL2CPP.\");\n}";
+        }
+
+        private static bool IsStockFunction(string function)
+        {
+            var body = function.Substring(function.IndexOf('{') + 1).TrimEnd('}').Trim();
+            return Regex.IsMatch(body, "^NOT_SUPPORTED_IL2CPP\\(\\s*(?:RuntimeModule|Module)::GetGuidInternal\\s*,\\s*\"[^\"]*\"\\s*\\)\\s*;\\s*$");
+        }
+
+        private static void ValidateGeneratedIndex(string source)
+        {
+            var entries = new Dictionary<string, Guid>(StringComparer.Ordinal);
+            foreach (Match match in Regex.Matches(source, @"\{ ""([^""]+)"", \{ ([^}]+) \} \},"))
+            {
+                var values = match.Groups[2].Value.Split(',');
+                if (values.Length != 16 || values.Any(value => !Regex.IsMatch(value.Trim(), "^0x[0-9a-fA-F]{2}$"))
+                    || entries.ContainsKey(match.Groups[1].Value))
+                    throw new InvalidOperationException("AI Bridge native index has changed; Release build cannot remove it safely.");
+                entries.Add(match.Groups[1].Value, new Guid(values.Select(value => Convert.ToByte(value.Trim().Substring(2), 16)).ToArray()));
+            }
+            if (Normalize(source) != Normalize(CreateIndex(entries, true)) && Normalize(source) != Normalize(CreateIndex(entries, false)))
+                throw new InvalidOperationException("AI Bridge native index has changed; Release build cannot remove it safely.");
+        }
+
         internal static string CreateIndex(IDictionary<string, Guid> entries, bool hasDhe)
         {
             var text = new StringBuilder("// AIBRIDGE_MODULE_MVID_INDEX_V1: generated from this Player's compiler outputs.\n#pragma once\n#include <cstring>\nnamespace aibridge_runtime {\n");
@@ -125,11 +230,12 @@ namespace AIBridge.Runtime.Editor
             {
                 foreach (var entry in changes)
                 {
-                    var bytes = new UTF8Encoding(false).GetBytes(entry.Value);
-                    if (originals[entry.Key] != null && bytes.SequenceEqual(originals[entry.Key])) continue;
+                    var bytes = entry.Value == null ? null : new UTF8Encoding(false).GetBytes(entry.Value);
+                    if (bytes == null && originals[entry.Key] == null) continue;
+                    if (bytes != null && originals[entry.Key] != null && bytes.SequenceEqual(originals[entry.Key])) continue;
                     Directory.CreateDirectory(Path.GetDirectoryName(entry.Key));
                     written.Add(entry.Key);
-                    File.WriteAllBytes(entry.Key, bytes);
+                    if (bytes == null) File.Delete(entry.Key); else File.WriteAllBytes(entry.Key, bytes);
                 }
             }
             catch

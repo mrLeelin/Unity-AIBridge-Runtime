@@ -101,6 +101,7 @@ namespace AIBridge.Runtime
     public sealed class AIBridgeRuntimeConfig
     {
         public const string ResourceName = "AIBridgeRuntimeConfig";
+        public static AIBridgeRuntimeConfig Load() => (AIBridgeRuntimeConfig)UnityEngine.Resources.Configuration;
         public bool AutoStart = true;
         public SettingsData Settings = new();
         public sealed class SettingsData { public string authToken = "fixture-only"; }

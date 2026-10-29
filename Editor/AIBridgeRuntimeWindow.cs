@@ -934,7 +934,7 @@ namespace AIBridge.Runtime.Editor
 
         private void LoadConnectionConfiguration()
         {
-            var config = Resources.Load<AIBridgeRuntimeConfig>(AIBridgeRuntimeConfig.ResourceName);
+            var config = AIBridgeRuntimeConfig.Load();
             if (config == null)
                 return;
             var settings = config.Settings;
@@ -957,7 +957,7 @@ namespace AIBridge.Runtime.Editor
 
         private void CreateOrApplySceneRuntime()
         {
-            var config = Resources.Load<AIBridgeRuntimeConfig>(AIBridgeRuntimeConfig.ResourceName);
+            var config = AIBridgeRuntimeConfig.Load();
             if (config == null)
             {
                 _error = "请先在出包设置中创建 Runtime 配置。";

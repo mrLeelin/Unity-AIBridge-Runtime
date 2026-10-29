@@ -16,7 +16,7 @@ namespace AIBridge.Runtime
         {
             _configuration = null;
 #if DEVELOPMENT_BUILD && !UNITY_EDITOR
-            _configuration = Resources.Load<AIBridgeRuntimeConfig>(AIBridgeRuntimeConfig.ResourceName);
+            _configuration = AIBridgeRuntimeConfig.Load();
             if (_configuration != null && _configuration.AutoStart
                 && _configuration.Settings.enableRuntimeBridge && _configuration.Settings.enableRuntimeCodeExecution)
                 AIBridgeHotfixHandler.PrepareRuntime();

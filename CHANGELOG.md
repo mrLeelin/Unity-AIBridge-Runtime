@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.2.1] - 2026-10-29
+
+### 修复
+
+- Release 构建通过程序集编译约束排除整个 Runtime，自动移除构建场景副本中的 Bridge 组件及空运行对象；Development Player 保留原有调试能力。
+- 配置移出 Resources，仅在开发构建时临时预加载；旧配置保留 GUID 自动迁移。成功、失败、取消及域重载后恢复预加载资源和 Editor 开发开关，无需为发布包手动关闭 Auto Start。
+- HybridCLR 与调试编译器的额外 linker 保留规则仅用于开发包；Release 原生编译前撤销已识别的插件改动，无法安全恢复时停止构建。
+- 检查本轮程序集、场景、Resources、预加载资源和 AssetBundle 依赖，以及最终 Mono/IL2CPP、APK/AAB 产物；识别 StreamingAssets 中改名文件与压缩 Bundle 的 Runtime/配置残留，并阻止出包。
+- 按本次构建参数对齐开发开关及导出 profile 的 DEVELOPMENT_BUILD 宏，避免自定义构建参数与 Editor 状态不一致带入脚本索引或错误宏。
+
+### 兼容与验证
+
+- 业务程序集直接引用 Runtime 时，相关代码或 asmdef 应使用相同的 UNITY_EDITOR || DEVELOPMENT_BUILD 编译条件。
+- Unity 6000.3.6f1 编译通过；91 项主机回归通过；Windows Mono 开发包及正式包实际构建、运行与状态恢复验收通过，真实压缩 Bundle 残留被拒绝。
+- 本次未重新构建 Android/iOS IL2CPP Player；原生恢复与 IL2CPP 元数据检测由主机回归覆盖，详见 [VALIDATION.md](VALIDATION.md)。
+
 ## [1.2.0] - 2026-10-29
 
 ### 新增

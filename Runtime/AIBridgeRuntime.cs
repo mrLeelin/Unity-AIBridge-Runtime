@@ -149,7 +149,7 @@ namespace AIBridge.Runtime
             // 显式启用项目配置后，旧场景组件也使用同一份 Runtime 配置；不修改场景资产。
             if (!SettingsProvidedExplicitly)
             {
-                var configuration = Resources.Load<AIBridgeRuntimeConfig>(AIBridgeRuntimeConfig.ResourceName);
+                var configuration = AIBridgeRuntimeConfig.Load();
                 if (configuration != null && configuration.AutoStart)
                     runtimeSettings = configuration.Settings.Clone();
             }

@@ -56,6 +56,11 @@ namespace AIBridge.Runtime.Editor
         // UnityLinker 已收到本轮 Player 编译产物，此处准备 native 输入，早于 IL2CPP 编译。
         internal static void PrepareNativeBuild(BuildReport report)
         {
+            if ((report.summary.options & BuildOptions.Development) == 0)
+            {
+                RemoveNativeBuildSupport();
+                return;
+            }
             // 旧索引无法清除时必须停止构建，不能把上一个包的身份误带入当前包。
             var local = ResolveLocalIl2Cpp();
             if (local != null) AIBridgeRuntimeNativeSupport.ClearGeneratedIndex(ProjectRoot, Path.Combine(local, "libil2cpp"));
@@ -67,10 +72,20 @@ namespace AIBridge.Runtime.Editor
             }
         }
 
+        internal static void RemoveNativeBuildSupport()
+        {
+            var local = ResolveLocalIl2Cpp();
+            if (local == null) return;
+            var package = UnityEditor.PackageManager.PackageInfo.FindForAssembly(typeof(AIBridgeRuntimeProjectIntegration).Assembly);
+            if (package == null) throw new BuildFailedException("Cannot resolve AI Bridge Runtime package for Release cleanup.");
+            AIBridgeRuntimeNativeSupport.RemoveSupport(ProjectRoot, Path.Combine(local, "libil2cpp"),
+                Path.Combine(package.resolvedPath, "Tools~", "Native"));
+        }
+
         private static void PrepareNativeBuildCore(BuildReport report)
         {
             var local = ResolveLocalIl2Cpp();
-            var config = Resources.Load<AIBridgeRuntimeConfig>(AIBridgeRuntimeConfig.ResourceName);
+            var config = AIBridgeRuntimeConfig.Load();
             if (config == null || !config.AutoStart || !config.Settings.enableRuntimeBridge) return;
             if ((report.summary.options & BuildOptions.Development) == 0) return;
             var target = NamedBuildTarget.FromBuildTargetGroup(BuildPipeline.GetBuildTargetGroup(report.summary.platform));
@@ -159,6 +174,8 @@ namespace AIBridge.Runtime.Editor
         public string GenerateAdditionalLinkXmlFile(BuildReport report, UnityLinkerBuildPipelineData data)
         {
             AIBridgeRuntimeProjectIntegration.PrepareNativeBuild(report);
+            if ((report.summary.options & BuildOptions.Development) == 0)
+                AIBridgeRuntimeReleaseValidation.ValidateLinkerInput(data);
             return null;
         }
     }

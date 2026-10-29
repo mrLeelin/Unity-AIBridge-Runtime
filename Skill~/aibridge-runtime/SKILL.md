@@ -13,7 +13,7 @@ description: 独立连接 Unity 手机测试包或 Player，执行 C# 调试 DLL
 
 ## 连接手机
 
-测试包需要启用 Runtime 自有配置：`Window > AI Bridge Runtime > Settings`，创建 `Assets/Resources/AIBridgeRuntimeConfig.asset`，显式开启 Auto Start 后构建 Development Player。默认 HTTP 仅绑定 127.0.0.1，关闭 LAN 广播。Token 不得写入聊天、日志或版本控制；命令使用 `RUNTIMEBRIDGE_TOKEN` 环境变量。
+测试包需要启用 Runtime 自有配置：`Window > AI Bridge Runtime > Settings`，创建 `Assets/AIBridgeRuntime/Configuration/AIBridgeRuntimeConfig.asset`，显式开启 Auto Start 后构建 Development Player。配置仅在开发构建期间加入预加载资源；旧 Resources 配置会自动迁移。Release 自动剥离 Runtime，无需关闭 Auto Start；构建检查发现程序集、配置或资源包残留时必须停止并处理来源依赖。默认 HTTP 仅绑定 127.0.0.1，关闭 LAN 广播。Token 不得写入聊天、日志或版本控制；命令使用 `RUNTIMEBRIDGE_TOKEN` 环境变量。
 
 ```powershell
 python $tool device --port 27182

@@ -91,3 +91,20 @@ dotnet run --project 'Editor/BuildProfileTests~/BuildProfile.Tests.csproj' --ver
 - 首次使用这些新 Runtime 接口需要更新 Development Player。当前旧 runtime.perf 的间隔采样统计问题尚未在本次修改中重写；新接口直接返回 ProfilerRecorder 环形缓冲样本。
 - 构建遇到 Demo DHE 自动配置与空验收场景不匹配，使用临时验收配置完成构建后恢复 LFramework.Hotfix 设置，并删除临时场景及 link.xml。原工作场景保持原样。证据在 .runtimebridge/evidence/runtime-tools/。
 - 1.2.0 验收安装包未包含独立的 Editor/AIBridgeRuntimeWindow.cs 调试 DLL 下拉框改动；该改动不属于本次版本发布范围。
+
+
+## 1.2.1 Release 自动剥离（2026-10-29）
+
+- Unity 6000.3.6f1 编译检查通过。Windows Mono Development 和 Release Player 实际构建成功；Release 包没有 Runtime DLL、配置资产或 MonoScript 名称记录，Player 运行后没有启动 Bridge。
+- 开发包实际运行并上报 ready=true，配置资产仅在开发包中预加载。自定义 BuildOptions 与 Editor 开发开关不一致的 Release 构建也通过；成功和预处理失败后均恢复原预加载资源与开关。
+- 使用真实 LZMA 压缩 Bundle 验证：普通 Bundle 放行；原始压缩字节不含明文标记、解压后包含 Runtime 标记的 Bundle 被拒绝。将其改名放入 StreamingAssets 后，Release 构建在预处理阶段失败。
+- 91 项主机回归通过：构建 profile/linker 生命周期 22 项、原生安装/恢复 29 项、最终产物检测 24 项、StreamingAssets 检测 16 项。临时场景 Play Mode 中 Runtime 与独立场景对象正常存在；验收资源已清理。
+- Mono 验收期间临时关闭项目 HybridCLR 构建钩子，避免第三方钩子强制切换后端；验收后恢复原 Android 目标、开发开关、HybridCLR 开关、Windows Mono 后端与预加载资源。本次未重新构建 Android/iOS IL2CPP Player，也未重新验证原生 Hotfix 执行；这些平台的 Release 剥离仍需对应 Player 验收。
+- 测试项目证据：.runtimebridge/verification/release-exclusion-results.json。
+
+```powershell
+dotnet run --project 'Editor/BuildProfileTests~/BuildProfile.Tests.csproj'
+dotnet run --project 'Editor/NativeSupportTests~/NativeSupport.Tests.csproj' -- 'Tools~/Native'
+dotnet run --project 'Editor/ReleaseValidationTests~/ReleaseValidation.Tests.csproj'
+dotnet run --project 'Editor/StreamingAssetsValidationTests~/StreamingAssetsValidation.Tests.csproj'
+```

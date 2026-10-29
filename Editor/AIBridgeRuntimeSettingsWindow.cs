@@ -11,7 +11,8 @@ namespace AIBridge.Runtime.Editor
     /// <summary>独立 Runtime 插件的出包配置，不提供 Editor 自动化命令。</summary>
     public sealed class AIBridgeRuntimeSettingsWindow : EditorWindow
     {
-        public const string ConfigAssetPath = "Assets/Resources/AIBridgeRuntimeConfig.asset";
+        public const string ConfigAssetPath = AIBridgeRuntimeConfig.ConfigAssetPath;
+        private const string LegacyConfigAssetPath = "Assets/Resources/AIBridgeRuntimeConfig.asset";
         private Vector2 _scrollPosition;
 
         [MenuItem("Window/AI Bridge Runtime/Settings")]
@@ -31,7 +32,7 @@ namespace AIBridge.Runtime.Editor
             if (GUILayout.Button("准备当前项目（无需添加业务代码）"))
                 AIBridgeRuntimeProjectIntegration.PrepareCurrentProject();
             EditorGUILayout.HelpBox(AIBridgeRuntimeProjectIntegration.Describe(), MessageType.Info);
-            var config = Resources.Load<AIBridgeRuntimeConfig>(AIBridgeRuntimeConfig.ResourceName);
+            var config = AIBridgeRuntimeConfig.Load();
             if (config == null)
             {
                 if (GUILayout.Button("Create Runtime Configuration"))
@@ -65,16 +66,42 @@ namespace AIBridge.Runtime.Editor
         /// <summary>显式创建配置，不在包导入或域重载时自动启用服务。</summary>
         public static AIBridgeRuntimeConfig CreateConfiguration()
         {
+            MigrateLegacyConfiguration();
             var existing = AssetDatabase.LoadAssetAtPath<AIBridgeRuntimeConfig>(ConfigAssetPath);
             if (existing != null)
                 return existing;
-            if (!AssetDatabase.IsValidFolder("Assets/Resources"))
-                AssetDatabase.CreateFolder("Assets", "Resources");
+            EnsureConfigurationFolder();
             var config = CreateInstance<AIBridgeRuntimeConfig>();
             AssetDatabase.CreateAsset(config, ConfigAssetPath);
             AssetDatabase.SaveAssetIfDirty(config);
             Selection.activeObject = config;
             return config;
+        }
+
+        [InitializeOnLoadMethod]
+        private static void ScheduleConfigurationMigration()
+        {
+            EditorApplication.delayCall += MigrateLegacyConfiguration;
+        }
+
+        internal static void MigrateLegacyConfiguration()
+        {
+            var legacy = AssetDatabase.LoadAssetAtPath<AIBridgeRuntimeConfig>(LegacyConfigAssetPath);
+            if (legacy == null) return;
+            if (AssetDatabase.LoadAssetAtPath<AIBridgeRuntimeConfig>(ConfigAssetPath) != null)
+                throw new InvalidOperationException("Two AI Bridge configurations exist; resolve the legacy Resources configuration before building.");
+            EnsureConfigurationFolder();
+            var error = AssetDatabase.MoveAsset(LegacyConfigAssetPath, ConfigAssetPath);
+            if (!string.IsNullOrEmpty(error)) throw new InvalidOperationException(error);
+            AssetDatabase.SaveAssetIfDirty(legacy);
+        }
+
+        private static void EnsureConfigurationFolder()
+        {
+            if (!AssetDatabase.IsValidFolder("Assets/AIBridgeRuntime"))
+                AssetDatabase.CreateFolder("Assets", "AIBridgeRuntime");
+            if (!AssetDatabase.IsValidFolder("Assets/AIBridgeRuntime/Configuration"))
+                AssetDatabase.CreateFolder("Assets/AIBridgeRuntime", "Configuration");
         }
 
         private static void ImportLegacySettings(AIBridgeRuntimeConfig config)
