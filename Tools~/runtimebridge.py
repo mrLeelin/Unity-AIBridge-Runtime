@@ -408,7 +408,7 @@ class Client:
         self.token = token
         self.timeout = max(1, timeout)
 
-    def request(self, path, data=None):
+    def request(self, path, data=None, timeout_seconds=None):
         headers = {"Accept": "application/json"}
         if self.token:
             headers["Authorization"] = "Bearer " + self.token
@@ -416,7 +416,7 @@ class Client:
             headers["Content-Type"] = "application/json"
         request = urllib.request.Request(self.url + path, data=None if data is None else json.dumps(data).encode("utf-8"), headers=headers)
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout + 5) as response:
+            with urllib.request.urlopen(request, timeout=self.timeout + 5 if timeout_seconds is None else timeout_seconds) as response:
                 return response.status, json.load(response)
         except urllib.error.HTTPError as error:
             try:
@@ -427,19 +427,50 @@ class Client:
         except (urllib.error.URLError, TimeoutError, OSError) as error:
             raise BridgeError(f"Runtime connection failed ({type(error).__name__}); confirm the Player is running and ADB forwarding is active.") from error
 
-    def command(self, action, parameters):
+    def read_screenshot(self, metadata):
+        """Pull only a named PNG artifact from this authenticated origin, with integrity/size checks."""
+        filename, expected = metadata.get("filename"), metadata.get("sha256")
+        size = metadata.get("fileSize")
+        if (not isinstance(filename, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+[.]png", filename)
+                or ".." in filename or not isinstance(expected, str) or not re.fullmatch(r"[a-fA-F0-9]{64}", expected)
+                or isinstance(size, bool) or not isinstance(size, int) or not 8 <= size <= 16 * 1024 * 1024):
+            raise BridgeError("Invalid or oversized screenshot artifact metadata.")
+        headers = {"Accept": "image/png"}
+        if self.token: headers["Authorization"] = "Bearer " + self.token
+        request = urllib.request.Request(self.url + "/aibridge/artifacts/" + filename, headers=headers)
+        class NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, *args, **kwargs): return None
+        try:
+            with urllib.request.build_opener(NoRedirect).open(request, timeout=self.timeout + 5) as response:
+                payload = response.read(size + 1)
+        except (urllib.error.URLError, TimeoutError, OSError) as error:
+            raise BridgeError(f"Screenshot download failed ({type(error).__name__}); capture a new image.") from error
+        if len(payload) != size or not payload.startswith(b"\x89PNG\r\n\x1a\n") or sha256(payload).lower() != expected.lower():
+            raise BridgeError("Screenshot integrity check failed; capture a new image.")
+        return payload
+
+    def command(self, action, parameters, deadline=None):
         command_id = "runtimebridge_" + uuid.uuid4().hex
         payload = {"Id": command_id, "Action": action, "Params": parameters}
-        deadline = time.monotonic() + self.timeout + 5
-        status, result = self.request("/aibridge/commands?timeoutMs=" + str(min(self.timeout * 1000, 300000)), payload)
+        external_deadline = deadline
+        deadline = deadline if deadline is not None else time.monotonic() + self.timeout + 5
+        def request(path, body=None):
+            if external_deadline is None: return self.request(path, body)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0: raise BridgeError("Read deadline exceeded.")
+            return self.request(path, body, timeout_seconds=remaining)
+        remote_timeout = min(self.timeout * 1000, 300000)
+        if external_deadline is not None:
+            remote_timeout = max(100, min(remote_timeout, int(max(0, deadline - time.monotonic()) * 1000)))
+        status, result = request("/aibridge/commands?timeoutMs=" + str(remote_timeout), payload)
         while status == 202 or result.get("completed") is False or result.get("Completed") is False:
             if time.monotonic() >= deadline:
                 raise BridgeError("Runtime execution is still pending; the command was not resent. Command ID: " + command_id)
             path = result.get("resultUrl") or "/aibridge/results/" + urllib.parse.quote(command_id, safe="")
             if not path.startswith("/aibridge/results/") or ".." in path or "?" in path or "#" in path:
                 raise BridgeError("Runtime returned an invalid result URL.")
-            time.sleep(0.1)
-            status, result = self.request(path)
+            time.sleep(min(0.1, max(0, deadline - time.monotonic())))
+            status, result = request(path)
         if result.get("Success", result.get("success", True)) is False:
             raise RemoteError(result)
         return result

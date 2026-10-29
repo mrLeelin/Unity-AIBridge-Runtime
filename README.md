@@ -213,3 +213,60 @@ Profiler 先注册/执行标记，再开始采集；最终 stop 释放会话。D
 同源、同编译器、同引用的一次性代码生成相同 DLL，复用设备缓存。
 
 版本变更记录见 [CHANGELOG.md](CHANGELOG.md)。
+
+## AI 观察、操作与结果验证（1.3.0）
+
+首次使用 `runtime_observe`、`runtime_wait` 和 `runtime_assert` 前，需要用当前包重新构建一次 Development Player。等待/断言会检查新的 serviceSessionId，旧包会返回 RUNTIME_UPDATE_REQUIRED。后续连接与操作不启动 Editor。
+
+MCP 现有 24 个工具，新增：
+
+| MCP 工具 | 用途 |
+| --- | --- |
+| runtime_screenshot | 返回 Player 帧缓冲 PNG 图片及尺寸、方向、帧号和哈希 |
+| runtime_ui_snapshot / runtime_ui_find | 查询 uGUI Button 文字、位置、可点击状态和遮挡信息 |
+| runtime_ui_raycast / runtime_ui_click | 检查命中目标并发送 EventSystem 点击；点击要求 riskAccepted=true |
+| runtime_observe | 在同一 Unity 帧采集状态、UI、最近日志、可选对象字段和截图 |
+| runtime_wait / runtime_assert | 等待条件成立或检查一次；失败返回实际值，等待超时返回最后一次观察 |
+
+截图以 MCP image 内容返回，电脑通过既有认证通道按文件名下载，检查 PNG 头、文件大小及 SHA256；最大 16 MiB，不跟随下载重定向。截取范围是 Unity Player 画面，系统权限弹窗等系统界面不在范围内。
+
+推荐操作流程：
+
+1. 调用 runtime_status 确认设备、buildId 和 ready，再调用 runtime_observe。
+2. 用 runtime_ui_find 定位当前按钮，并检查可点击状态；必要时调用 runtime_ui_raycast 查遮挡。
+3. 调用 runtime_ui_click，随后用 runtime_wait 等待目标状态，再用 runtime_assert 验证结果。
+4. 再次观察，保留前后截图及实际值。点击事件送达仅证明输入送达，业务成功由后续条件证明。
+
+统一观察参数示例：
+
+```json
+{"includeScreenshot":true,"includeUi":true,"maxResults":100,"logCount":20,"logType":"Error","objectTokens":[]}
+```
+
+返回 serviceSessionId、capturedFrame、captureEndFrame、status、ui、logs、objects 和 screenshot。每个对象单独报告 success/error，过期句柄不会使其他对象丢失。字段检查不执行属性 getter。objectTokens 最多 16 个，日志最多 200 条；logCount=0 返回空数组。includeScreenshot=false 可用于后台或无图形界面的检查。记录了同一 Unity 帧的采集范围，不提供跨线程业务状态事务快照。
+
+等待按钮可点击：
+
+```json
+{"condition":{"source":"ui","params":{"keyword":"领取"},"path":"summary.clickableCount","operator":"gt","expected":0},"timeoutSeconds":10,"intervalMs":250}
+```
+
+断言当前场景：
+
+```json
+{"condition":{"source":"status","path":"activeScene","operator":"eq","expected":"Battle"}}
+```
+
+等待对象公共成员达到预期：
+
+```json
+{"condition":{"source":"member","params":{"objectToken":"当前对象句柄","member":"Gold","riskAccepted":true},"path":"value","operator":"gte","expected":100},"timeoutSeconds":10}
+```
+
+condition.source 支持 status、ui、hierarchy、member、logs，分别使用对应读取接口的参数；params 不接受任意 action 或代码。path 是返回 Data 内的点分隔 JSON 键/数组索引。比较支持 eq、ne、gt、gte、lt、lte、contains、exists、notExists；有序比较只接受数字，exists 表示路径存在且值非 null。UI 结果可能截断，存在性判断优先使用 summary.matchCount/clickableCount，避免仅检查 buttons 数组。
+
+等待最长 60 秒，轮询间隔 100–5000 ms，默认 250 ms。结果包含 matched、attempts、elapsedSeconds 和 lastObservation；后者记录实际值、值是否存在、起止帧及服务会话。成员属性 getter 需要显式 riskAccepted=true，可能每轮执行并产生副作用。设备重启、服务重启或目标切换会返回 SESSION_CHANGED，需重新观察当前设备。超时不会撤销已经执行的点击、业务方法或补丁。
+
+所有 MCP 工具附带 outputSchema，并在 structuredContent 返回 {success,data}，保留原 text 内容兼容已有客户端。断言失败、超时和 UI 操作失败设置 isError=true，并提供 ASSERTION_FAILED、WAIT_TIMEOUT、UI_ACTION_FAILED 等错误码；图片下载失败仍保留已采集的观察数据。runtime_wait/runtime_assert 因允许显式读取属性 getter，不声明为纯只读工具。
+
+当前 UI 查询集中在 uGUI Button；点击使用 EventSystem 事件链。拖拽、多指触摸、UI Toolkit 和操作系统级输入不属于本版接口。

@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.3.0] - 2026-10-29
+
+### 新增
+
+- MCP 接入 Player 截图、uGUI 快照/查询/遮挡检查及点击，直接返回 PNG 图片。
+- 新增同帧 runtime.observe，组合设备状态、UI、日志和可选对象字段，附采集帧与服务会话。
+- 新增 runtime_wait/runtime_assert，支持有界条件比较、超时实际值和会话切换拒绝。
+- 所有 MCP 工具提供结构化结果及输出约定，UI 内部失败正确转为工具错误。截图下载增加认证、大小与哈希检查。
+
+### 验证与兼容
+
+- 首次使用统一观察和等待/断言需重新构建 Development Player；MCP 工具数为 24。
+- Unity 6000.3.6f1 编译与 Play Mode 交互闭环 19 项检查通过；Python 回归 99 项，98 通过、1 项 Windows 符号链接权限不足跳过。
+- 本轮未重新构建 Android/iOS Player，也未在实体手机上验收；详见 VALIDATION.md。
+
+
 ## [1.2.1] - 2026-10-29
 
 ### 修复

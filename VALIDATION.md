@@ -108,3 +108,16 @@ dotnet run --project 'Editor/NativeSupportTests~/NativeSupport.Tests.csproj' -- 
 dotnet run --project 'Editor/ReleaseValidationTests~/ReleaseValidation.Tests.csproj'
 dotnet run --project 'Editor/StreamingAssetsValidationTests~/StreamingAssetsValidation.Tests.csproj'
 ```
+
+
+## 1.3.0 AI 观察与验证闭环（2026-10-29）
+
+- Unity 6000.3.6f1 当前工程重新编译通过，script recompile_status 返回 completed、failed=false、errors=[]。新 CaptureObservation 方法已在加载的 Runtime 程序集中确认。
+- Python 回归共 99 项：98 通过，1 项因 Windows 符号链接权限不足跳过。新增 20 项覆盖有界等待、条件实际值、false/0/null 类型语义、会话变更、UI 内部失败及图片下载认证/哈希/大小/路径/重定向限制。
+- Windows Editor Play Mode 使用真实 Runtime HTTP、临时 uGUI Canvas/Button 和独立测试端口完成 19 项检查。点击 Claim Reward 后，场景对象变为 RewardBalance_100、按钮文字变为 Claimed；runtime_wait 和 runtime_assert 验证实际变化。
+- 前后统一观察的 capturedFrame、captureEndFrame、status.frameCount 和 screenshot.capturedFrame 一致，PNG 经认证拉取及哈希验证并保存。过期对象句柄单独报错，其他对象仍返回；logCount=0 返回空数组。
+- 0.3 秒等待未满足条件，实测约 0.312 秒返回 WAIT_TIMEOUT 和最后的实际值；失败断言返回 ASSERTION_FAILED。真实 Python 子进程完成 MCP stdio 握手、发现 24 个工具，并成功读取当前 Runtime。
+- 服务启动后的 Runtime 观察日志无 Error；Play Mode 启动阶段另观察到 LFramework.Runtime.DefaultTableHelper.Start 第 52 行空引用，该框架问题没有修复，不能将整个工程运行标为无错误。
+- 已退出 Play Mode，原 AIBridgeSmoke 场景恢复为原路径、2 个根对象、isDirty=false。临时对象随 Play Mode 清除，含临时 Token 的设置脚本已删除。
+- 本次未构建 Android/iOS Player，未在实体手机上验证。上述 Play Mode 检查证明观察/交互协议与状态验证流程，不替代移动平台、IL2CPP 或原生触摸输入验收。首次使用新版观察/等待功能须更新 Development Player。
+- 测试工程证据：.runtimebridge/verification/ai-loop/results.json、before.png、after.png 及对应观察 JSON。

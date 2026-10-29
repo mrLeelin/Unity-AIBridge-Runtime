@@ -1,6 +1,6 @@
 ---
 name: aibridge-runtime
-description: 独立连接 Unity 手机测试包或 Player，执行 C# 调试 DLL、读取日志或用 HybridCLR 修复已加载方法。用于真机代码执行、实时方法补丁和 Runtime Bridge；操作期间无需 Unity Editor。Editor 场景和 Prefab 编辑使用 aibridge。
+description: 独立连接 Unity 手机测试包或 Player，观察画面与 uGUI、点击并验证结果、检查对象与日志、执行 C# 或用 HybridCLR 修复方法。用于真机代码执行、实时方法补丁和 Runtime Bridge；操作期间无需 Unity Editor。Editor 场景和 Prefab 编辑使用 aibridge。
 ---
 
 # AI Bridge Runtime
@@ -21,6 +21,16 @@ python $tool status
 ```
 
 `device` 只设置 adb 端口转发，不安装或重启游戏。必须先核对 status 的平台、产品、buildId、ready 和 runtimeCodeExecute 能力。先让用户启动目标测试包，不能把离线目标当成接口故障。需要时用 `--url` 指定 HTTP 地址。
+
+## AI 操作闭环
+
+通过 Tools~/mcp_runtime.py 接入 MCP，环境变量配置见包根 README.md。先用 runtime_status 确认设备/buildId/ready，再用 runtime_observe 同帧获取画面、UI、日志和可选对象字段。
+
+使用 runtime_ui_find 定位当前 uGUI Button，检查 clickable 和遮挡信息；runtime_ui_raycast 可复核命中目标。发送 runtime_ui_click 后，用 runtime_wait 等待目标状态，再用 runtime_assert 验证实际结果，最后观察并保存证据。点击事件送达与业务成功分别记录。参数示例和 condition 语法见 README.md 的“AI 观察、操作与结果验证”。
+
+首次启用统一观察与等待/断言，需要重新构建 Development Player。检查 serviceSessionId；遇到 SESSION_CHANGED 时重新观察并获取句柄。WAIT_TIMEOUT/ASSERTION_FAILED 的 lastObservation 是失败证据。成员属性 getter 需显式 riskAccepted=true，轮询可能重复执行 getter。操作超时后核对当前状态，再决定下一步。
+
+截图以 MCP 图片返回。统一观察中查看 capturedFrame/captureEndFrame，各对象分别检查 success/error。无图形界面或后台检查使用 includeScreenshot=false。UI 查询覆盖 uGUI Button，点击走 EventSystem，系统弹窗或触摸手势需要另选实际支持的工具。
 
 ## 执行临时代码
 

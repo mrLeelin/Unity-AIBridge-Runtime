@@ -31,7 +31,7 @@ namespace AIBridge.Runtime
     /// AIBridge Runtime MonoBehaviour singleton.
     /// Receives and processes commands from AI Code assistants during Play mode or built Player runtime.
     /// </summary>
-    public class AIBridgeRuntime : MonoBehaviour
+    public partial class AIBridgeRuntime : MonoBehaviour
     {
         private const string RuntimeVersion = "1.0";
         private const string RuntimeDirArgument = "--aibridge-runtime-dir";
@@ -60,6 +60,7 @@ namespace AIBridge.Runtime
             "runtime.logs.clear",
             "runtime.perf",
             "runtime.screenshot",
+            "runtime.observe",
             "runtime.ui.snapshot",
             "runtime.ui.find",
             "runtime.ui.raycast",
@@ -127,6 +128,7 @@ namespace AIBridge.Runtime
         private float _lastHeartbeatTime;
         private float _lastOrphanCleanupTime;
         private DateTime _startedAtUtc;
+        private string _serviceSessionId = Guid.NewGuid().ToString("N");
         private bool _initialized;
         private RuntimeToolHandler _runtimeTools;
         private bool _runInBackgroundChanged;
@@ -506,6 +508,10 @@ namespace AIBridge.Runtime
                         targetId = _targetId
                     });
                     return true;
+                case "runtime.observe":
+                    StartCoroutine(CaptureObservation(cmd));
+                    asyncStarted = true;
+                    return true;
                 case "runtime.screenshot":
                     StartCoroutine(CaptureScreenshot(cmd));
                     asyncStarted = true;
@@ -611,67 +617,9 @@ namespace AIBridge.Runtime
         private IEnumerator CaptureScreenshot(AIBridgeRuntimeCommand cmd)
         {
             yield return new WaitForEndOfFrame();
-
             AIBridgeRuntimeCommandResult result;
-            Texture2D texture = null;
-            try
-            {
-                Directory.CreateDirectory(_screenshotsPath);
-                texture = ScreenCapture.CaptureScreenshotAsTexture();
-                if (texture == null)
-                {
-                    result = AIBridgeRuntimeCommandResult.FromFailure(cmd.Id, "ScreenCapture returned no texture.");
-                }
-                else
-                {
-                    var capturedAtUtc = DateTime.UtcNow;
-                    var capturedFrame = Time.frameCount;
-                    var safeArea = Screen.safeArea;
-                    var filename = "runtime_screenshot_" + capturedAtUtc.ToString("yyyyMMdd_HHmmss_fff") + ".png";
-                    var path = Path.Combine(_screenshotsPath, filename);
-                    var bytes = texture.EncodeToPNG();
-                    File.WriteAllBytes(path, bytes);
-                    CleanupOldScreenshots();
-                    result = AIBridgeRuntimeCommandResult.FromSuccess(cmd.Id, new
-                    {
-                        action = "runtime.screenshot",
-                        imagePath = path,
-                        filename = filename,
-                        width = texture.width,
-                        height = texture.height,
-                        fileSize = bytes == null ? 0 : bytes.Length,
-                        orientation = Screen.orientation.ToString(),
-                        safeArea = new
-                        {
-                            x = safeArea.x,
-                            y = safeArea.y,
-                            width = safeArea.width,
-                            height = safeArea.height,
-                            xMin = safeArea.xMin,
-                            yMin = safeArea.yMin,
-                            xMax = safeArea.xMax,
-                            yMax = safeArea.yMax
-                        },
-                        screenDpi = Screen.dpi,
-                        capturedFrame = capturedFrame,
-                        capturedAtUtc = capturedAtUtc.ToString("o"),
-                        sha256 = ComputeSha256(bytes),
-                        timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
-                    });
-                }
-            }
-            catch (Exception ex)
-            {
-                result = AIBridgeRuntimeCommandResult.FromFailure(cmd.Id, $"{ex.GetType().Name}: {ex.Message}");
-            }
-            finally
-            {
-                if (texture != null)
-                {
-                    Destroy(texture);
-                }
-            }
-
+            try { result = AIBridgeRuntimeCommandResult.FromSuccess(cmd.Id, CaptureScreenData()); }
+            catch (Exception ex) { result = AIBridgeRuntimeCommandResult.FromFailure(cmd.Id, $"{ex.GetType().Name}: {ex.Message}"); }
             WriteResult(result);
         }
 
@@ -1268,6 +1216,7 @@ namespace AIBridge.Runtime
             {
                 ["targetId"] = _targetId,
                 ["protocolVersion"] = 2,
+                ["serviceSessionId"] = _serviceSessionId,
                 ["transport"] = _httpTransportServer != null && _httpTransportServer.IsRunning ? "http" : "file",
                 ["capabilities"] = BuildCapabilitiesData(),
                 ["bindUrl"] = BuildLocalHttpUrl(),
@@ -1888,6 +1837,7 @@ namespace AIBridge.Runtime
 
         private void MarkRuntimeServicesRunning()
         {
+            if (_runtimeServicesStopping) _serviceSessionId = Guid.NewGuid().ToString("N");
             _runtimeServicesStopping = false;
             _runtimeStopReason = null;
             lock (_pendingHttpResultsSyncRoot)
@@ -2571,6 +2521,7 @@ namespace AIBridge.Runtime
                 ["perf"] = true,
                 ["diagnose"] = true,
                 ["screenshotPull"] = true,
+                ["observe"] = true,
                 ["logsClear"] = true,
                 ["runtimeCodeExecute"] = runtimeCodeAvailable,
                 ["runtimeCodeExecuteReason"] = runtimeCodeAvailable ? null : runtimeCodeUnavailableReason,
