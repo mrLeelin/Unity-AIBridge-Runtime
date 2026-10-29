@@ -278,12 +278,18 @@ def compile_snippet(code, profile_path, save_dll=None):
 def _compile_verified_snippet(code, references, defines, save_dll=None):
     """Internal: callers must supply references verified for this workflow's exact Player profile."""
     dotnet, compiler = csc_path()
+    identity = hashlib.sha256(code.encode("utf-8") + json.dumps(sorted(defines)).encode("utf-8"))
+    identity.update(Path(compiler).read_bytes())
+    for reference in references:
+        identity.update(Path(reference).name.encode("utf-8"))
+        identity.update(hashlib.sha256(Path(reference).read_bytes()).digest())
     with tempfile.TemporaryDirectory(prefix="runtimebridge-compile-") as temporary:
         directory = Path(temporary)
         source = directory / "Snippet.cs"
-        assembly = directory / ("RuntimeBridgeSnippet_" + uuid.uuid4().hex + ".dll")
+        assembly = directory / ("RuntimeBridgeSnippet_" + identity.hexdigest()[:32] + ".dll")
         source.write_text(wrap_snippet(code), encoding="utf-8")
         arguments = ["-nologo", "-utf8output", "-target:library", "-nostdlib+", "-langversion:latest", "-optimize-", "-deterministic+", f'-out:"{assembly}"']
+        arguments.append(f'-pathmap:"{directory}=/_runtimebridge"')
         arguments += [f'-r:"{reference}"' for reference in references]
         if defines:
             arguments.append("-define:" + ";".join(defines))
@@ -447,6 +453,9 @@ def create_parser():
     common.add_argument("--token", default=os.environ.get("RUNTIMEBRIDGE_TOKEN", ""))
     common.add_argument("--timeout", type=int, default=30, help="HTTP command timeout in seconds")
     commands.add_parser("status", parents=[common])
+    call = commands.add_parser("call", parents=[common], help="Invoke a Runtime command with JSON parameters")
+    call.add_argument("action")
+    call.add_argument("--params", default="{}")
     logs = commands.add_parser("logs", parents=[common])
     logs.add_argument("--log-type", default="Error", choices=["Error", "Warning", "Log", "All"])
     logs.add_argument("--count", type=int, default=100)
@@ -503,7 +512,12 @@ def main(argv=None):
             result = {"success": True, "forwardedPort": args.port}
         else:
             client = Client(args.url, args.token, args.timeout)
-            if args.command == "patch-source":
+            if args.command == "call":
+                parameters = json.loads(args.params)
+                if not isinstance(parameters, dict):
+                    raise BridgeError("--params must be a JSON object")
+                result = client.command(args.action, parameters)
+            elif args.command == "patch-source":
                 from patchsource_pipeline import prepare_and_apply
                 api = SimpleNamespace(**{name: globals()[name] for name in (
                     "BridgeError", "target_references", "validate_profile_target", "compile_snippet",

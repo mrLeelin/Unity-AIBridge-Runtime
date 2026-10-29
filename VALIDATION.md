@@ -77,3 +77,17 @@ dotnet run --project 'Editor/BuildProfileTests~/BuildProfile.Tests.csproj' --ver
 - 最后主场景 Play Mode 检查观察到 LFramework.Runtime.DefaultTableHelper.Start 第 52 行的空引用（LFrameworkAspect.Instance.Get<ResourceComponent>()）；已退出 Play Mode，未修改框架代码，未把主场景运行标为无错误。这与独立干净工程安装和已成功的无业务启动脚本 Android 空场景验收分别记录。
 
 - 原生自动适配失败时只保留现有工具链并报告能力；已有生成索引如果无法安全清空，则停止构建，避免复用旧包的身份。
+
+
+## 1.2.0 通用真机工具（2026-10-28）
+
+- 自动注册对象 Hierarchy/Inspector、公共属性读写、精确方法调用、程序集身份诊断、Profiler start/read/stop 会话。业务项目无需新增接入代码。
+- 对象使用绑定实际 Unity 对象的随机句柄；Editor 实验验证发现、字段/组件检查、属性写入、SetActive 调用、缺少风险确认的拒绝及销毁后的旧句柄拒绝。
+- Android ARM64/MuMu 验收包 Build ID 2e4f627767b5477e86f7b4f3b6752436。通过 MCP 调度层及真实 HTTP 读取对象，Transform.localPosition 写入 1/2/3 后读回一致，SetActive 生效并恢复；读取 83 个程序集诊断项。
+- 在设备上先注册 Marker，再通过新会话接口采集，得到 4 个非零样本：6441388、6119810、5926503、6047885 ns。停止接口释放 Recorder；Editor 中另验证到期停止和释放后拒绝旧 sessionId。
+- MCP stdio 握手和 tools/list 已用实际子进程验证，共 16 个工具；7 项 MCP 回归通过。完整 Python 检查 79 项，78 通过、1 项 Windows 符号链接限制跳过。
+- 同源、同编译器、同引用的重复代码实测生成相同 DLL，允许 Runtime 复用程序集缓存；不同代码仍受原有加载上限约束。
+- 新增 Profiler 类型开发构建保留规则。返回的是指定 Marker/计数器原始样本，不含完整 CPU 调用树或 GPU Timeline；程序集执行模式未知时明确标记 unknown，不将 MVID 可读冒充可热修复。
+- 首次使用这些新 Runtime 接口需要更新 Development Player。当前旧 runtime.perf 的间隔采样统计问题尚未在本次修改中重写；新接口直接返回 ProfilerRecorder 环形缓冲样本。
+- 构建遇到 Demo DHE 自动配置与空验收场景不匹配，使用临时验收配置完成构建后恢复 LFramework.Hotfix 设置，并删除临时场景及 link.xml。原工作场景保持原样。证据在 .runtimebridge/evidence/runtime-tools/。
+- 1.2.0 验收安装包未包含独立的 Editor/AIBridgeRuntimeWindow.cs 调试 DLL 下拉框改动；该改动不属于本次版本发布范围。

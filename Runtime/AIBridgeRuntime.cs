@@ -128,6 +128,7 @@ namespace AIBridge.Runtime
         private float _lastOrphanCleanupTime;
         private DateTime _startedAtUtc;
         private bool _initialized;
+        private RuntimeToolHandler _runtimeTools;
         private bool _runInBackgroundChanged;
         private bool _previousRunInBackground;
         private volatile bool _runtimeServicesStopping;
@@ -203,6 +204,7 @@ namespace AIBridge.Runtime
             }
 
             MarkMainThreadTick();
+            _runtimeTools?.Tick();
             WriteHeartbeatIfDue();
             CleanupOrphanResultsIfDue();
 
@@ -319,6 +321,8 @@ namespace AIBridge.Runtime
                 Directory.CreateDirectory(_screenshotsPath);
                 _logBuffer.Initialize(Math.Max(1, runtimeSettings.logBufferSize));
                 RegisterHandler(new AIBridgeHotfixHandler(runtimeSettings));
+                _runtimeTools = new RuntimeToolHandler(runtimeSettings);
+                RegisterHandler(_runtimeTools);
                 _initialized = true;
                 ApplyRunInBackgroundIfNeeded();
                 StartHttpTransportIfNeeded();
@@ -1903,6 +1907,7 @@ namespace AIBridge.Runtime
 
         private void StopRuntimeServices(string reason)
         {
+            _runtimeTools?.Dispose();
             _runtimeServicesStopping = true;
             _runtimeStopReason = string.IsNullOrEmpty(reason) ? "stopping" : reason;
             FailPendingHttpCommands("runtime_not_ready: " + _runtimeStopReason);

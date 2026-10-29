@@ -35,6 +35,11 @@ namespace AIBridge.Runtime.Editor
     <type fullname=""System.Threading.Tasks.Task*"" preserve=""all"" />
   </assembly>
   <assembly fullname=""UnityEngine.CoreModule"">
+    <type fullname=""UnityEngine.Profiling.Profiler"" preserve=""all"" />
+    <type fullname=""Unity.Profiling.ProfilerMarker"" preserve=""all"" />
+    <type fullname=""Unity.Profiling.ProfilerRecorder"" preserve=""all"" />
+    <type fullname=""Unity.Profiling.ProfilerRecorderSample"" preserve=""all"" />
+    <type fullname=""Unity.Profiling.ProfilerCategory"" preserve=""all"" />
     <type fullname=""UnityEngine.GameObject"" preserve=""all"" />
     <type fullname=""UnityEngine.PrimitiveType"" preserve=""all"" />
     <type fullname=""UnityEngine.Transform"" preserve=""all"" />

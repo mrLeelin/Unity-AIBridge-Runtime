@@ -285,6 +285,8 @@ class MetadataTests(unittest.TestCase):
         profile.write_text(json.dumps({"target": "FixturePlayer", "buildId": "unit-test-only", "referenceDirectory": str(runtime_root), "references": [path.name for path in references], "assemblyFingerprints": [{"name": path.stem, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()} for path in references], "defineSymbols": []}))
         data = bridge.compile_snippet('using System; var text = "Refusing to fail"; return text;', profile)
         self.assertTrue(data.startswith(b"MZ"))
+        repeated = bridge.compile_snippet('using System; var text = "Refusing to fail"; return text;', profile)
+        self.assertEqual(data, repeated, "identical probes must reuse the Player assembly cache")
 
 
 if __name__ == "__main__":

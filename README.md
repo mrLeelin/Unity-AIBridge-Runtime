@@ -174,3 +174,40 @@ python -m unittest discover -s 'Packages/com.sh.aibridge.runtime/Tools~/tests' -
 ```
 
 这些检查不等同于 Android IL2CPP 验收。`HotfixAssembly` 的 Editor 实现为空，因此 Editor 中不会把补丁调用当成真机修复成功。首次验收前须安装与项目匹配的 HybridCLR 原生运行时并成功构建测试 Player；真机方法替换必须以真实 Player 的前后行为为准。具体证据范围见 [VALIDATION.md](VALIDATION.md)，来源及许可见 [NOTICE.md](NOTICE.md) 与 [LICENSE](LICENSE)。
+
+## 通用真机工具接口
+
+新增接口随 Runtime 自动注册。首次使用需更新一次 Development Player；后续对象检查、修改和 Profiler 会话无需重新打包。
+
+| 命令 | 能力 |
+| --- | --- |
+| runtime.hierarchy | 按名称查询场景对象，offset/limit 分页，返回绑定对象的 objectToken |
+| runtime.inspect | 字段、组件、Transform、方法签名和属性列表；不自动执行 getter |
+| runtime.member.get/set | 明确读取或修改公共成员；支持标量、枚举、Vector2/3、Quaternion、Color |
+| runtime.method.invoke | 按完整公共实例方法签名调用；异步返回对象不代表任务完成 |
+| runtime.assemblies | 加载版本、MVID、读取失败原因；不猜测每个方法的执行模式 |
+| runtime.profiler.start/read/stop | 指定已注册 Marker 的原始样本，自动停止并可释放 |
+
+对象修改、属性 getter 和方法调用要求 riskAccepted=true，并遵守 enableRuntimeCodeExecution。objectToken 随对象销毁或服务重启失效，不把可复用的 instanceId 当作修改凭据。
+Profiler 上限为 8 个会话、每个 4096 个环形缓冲样本、1–60 秒自动停止；stop 默认释放。服务停止时释放所有 Recorder。此接口不提供完整 CPU 调用树或 GPU 时间线。
+
+CLI 示例：
+- python Tools~/runtimebridge.py call runtime.hierarchy --params '{"query":"Camera","limit":20}'
+- python Tools~/runtimebridge.py call runtime.profiler.start --params '{"marker":"AI.MyMarker","durationSeconds":10,"capacity":600}'
+
+### MCP 接入
+
+Tools~/mcp_runtime.py 提供标准 JSON-RPC stdio MCP 服务，包含上述工具、一次性 C# 和源码热更新。
+客户端的 command 配置为 python，args 为插件绝对路径下的 Tools~/mcp_runtime.py，环境变量：
+- RUNTIMEBRIDGE_URL：连接地址，默认 http://127.0.0.1:27182。
+- RUNTIMEBRIDGE_TOKEN：当前测试包 Token；不写入输出。
+- RUNTIMEBRIDGE_PROJECT：Unity 工程绝对路径。
+- RUNTIMEBRIDGE_PROFILE：可选；省略时按当前设备 Build ID 自动定位。
+
+先建立 ADB 转发并调用 runtime_status。每个 MCP 实例绑定一个设备地址。
+runtime_execute 与 runtime_patch_source 自动验证 profile；runtime_diagnose 组合设备能力、程序集身份与本地基线记录。没有匹配基线时仍拒绝更新。
+复杂对象操作或需要等待异步任务时使用 runtime_execute。
+Profiler 先注册/执行标记，再开始采集；最终 stop 释放会话。DHE 打点热修复可能改变原 AOT 方法的执行方式，报告必须标明。
+同源、同编译器、同引用的一次性代码生成相同 DLL，复用设备缓存。
+
+版本变更记录见 [CHANGELOG.md](CHANGELOG.md)。
